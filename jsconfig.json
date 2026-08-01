@@ -1,0 +1,23 @@
+{
+  "// world": "Browser: the shipped bytes under site/. Kept separate from tsconfig.tooling.json because viewer code must not type-check against node globals — the checker would otherwise accept code no browser can run.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["site/**/*.js", "site/**/*.mjs"]
+}

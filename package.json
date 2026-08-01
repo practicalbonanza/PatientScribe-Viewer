@@ -1,0 +1,23 @@
+{
+  "name": "patientscribe-viewer",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "browsers": "playwright install --with-deps chromium webkit",
+    "typecheck": "tsc --noEmit -p jsconfig.json && tsc --noEmit -p tsconfig.tooling.json",
+    "check:sinks": "node scripts/check-sinks.mjs",
+    "check:sinks:self": "node --test scripts/check-sinks-selftest.mjs",
+    "test:smoke": "playwright test",
+    "check": "npm run typecheck && npm run check:sinks && npm run check:sinks:self && npm run test:smoke"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.1.2",
+    "typescript": "7.0.2"
+  }
+}

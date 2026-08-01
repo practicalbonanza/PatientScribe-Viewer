@@ -1,0 +1,30 @@
+{
+  "// world": "Tooling: dev-only scripts, the browser-test harness and its config — never served. Kept separate from jsconfig.json because this is the only world allowed to see node globals; browser code must not type-check against them.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": [
+    "scripts/**/*.js",
+    "scripts/**/*.mjs",
+    "test/**/*.js",
+    "test/**/*.mjs",
+    "playwright.config.js"
+  ],
+  "exclude": ["node_modules", "test/sink-fixtures"]
+}

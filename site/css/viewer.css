@@ -1,0 +1,25 @@
+/*
+ * Scaffold stylesheet.
+ *
+ * Deliberately carries no visual design and no rules keyed to any rendered
+ * surface: the surfaces themselves do not exist yet. First-party only, and it
+ * stays that way — no imported fonts, no remote stylesheets, no remote images.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
