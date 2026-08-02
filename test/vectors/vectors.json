@@ -1,0 +1,273 @@
+{
+  "note": "Interop vectors for the share link scheme. Every key, nonce and identifier here is a fixed counting pattern or constant run written into the generator; none of it came from a real share and none of it protects anything. In each canonicalisation record, `input` is the question and `expected` is the answer to check against; `canonical` is what this generator produced for it and is the same string as `expected` in every record by construction, because the generator refuses to write a file in which the two differ. Three of the four canonicalisation inputs are values chosen to exercise one rule of the form and are not documents this protocol accepts — each record says so. Regenerate with: swift test/vectors/GenerateVectors.swift",
+  "scheme": {
+    "kek": "HKDF-SHA-256(ikm = a || b, salt = id, info = \"patientscribe/link_split_v1/kek\", 32 bytes)",
+    "wrapped_k": "AES-256-GCM(kek, k) with no additional authenticated data",
+    "ciphertext": "AES-256-GCM(k, plaintext) authenticating the aad string's UTF-8 bytes",
+    "wire": "nonce || ciphertext || tag, unpadded base64url; 96-bit nonce, 128-bit tag"
+  },
+  "fixtures": [
+    {
+      "name": "named",
+      "note": "A named recipient, unedited, two sections.",
+      "inputs": {
+        "a": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+        "b": "MDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk8",
+        "id": "AAECAwQFBgcICQoLDA0ODw",
+        "k": "UFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm8",
+        "wrap_nonce": "cHFyc3R1dnd4eXp7",
+        "content_nonce": "gIGCg4SFhoeIiYqL",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1767225600,\"id\":\"AAECAwQFBgcICQoLDA0ODw\",\"sfv\":\"1\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text.\",\"you_means\":\"Example Name\",\"edited\":false,\"visit_date\":\"2026-01-15\",\"topic\":\"Example topic\",\"sections\":[{\"heading\":\"Example heading one\",\"lines\":[\"Example line one.\",\"Example line two.\"]},{\"heading\":\"Example heading two\",\"lines\":[\"Example line three.\"]}]}"
+      },
+      "derived": {
+        "kek": "RJHKCOefKGDIz9q6ydCdyMCljYKCbXhFHNX9pftCgkk"
+      },
+      "outputs": {
+        "wrapped_k": "cHFyc3R1dnd4eXp7Fx-F7lzxJPh5vqZ96jHsiHUJQgK4ofWKozUFmjoe1XabycHWLvqs6jmaeuVdZ3H0",
+        "ciphertext": "gIGCg4SFhoeIiYqL8oeippoZYXPU-pkWoOiaS8W1JbwH-kdRBS_xfA4RQ8AUwc6y74JZITaJvKwGSu_ZoeN7-VJcZvp2t5a8uJrBmwNpC9tuoJv_5AU9JsfK2nQ71QUceqSkWCAz2rrMqONChMTvC1uwWnCyUYuOpcyOjaHvqVKlD5tdKBvGhG7ATXH3ybCa4BEJMmEQ1h51UAMUNMEUDDyzoTzsRSqRRsrLeOShm0e9v8xU58u6_aDN917T0cIC6aIzxC23YJwNxOCjjB9jiqkB7-UnT1S7vLCjG_5e5aXqXcaisO97RbhyNh0BOWvQU1t5SSTk3KOLYDaLccodx8xx1Q6Fz8kMv6zu7FDwTQP-iMKcuqGZJ9DjUChcp3j4594hKxT9ix9opL_ikCEHXPElif_2G9PEJLQiBVLfEr6eQs8ObK7HDS0kSTlksXYWO4hQmutr1sp_IiFzgivahGqNRCBatju9F0nc5wFvDkhBwtdlvm4u3ndIBGnRBRY",
+        "fragment": "#v=link_split_v1&id=AAECAwQFBgcICQoLDA0ODw&a=EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8"
+      }
+    },
+    {
+      "name": "nameless",
+      "note": "The nameless fallback: you_means is empty, which is a value and not an absence. Document members are in a scrambled order.",
+      "inputs": {
+        "a": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8",
+        "b": "wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t8",
+        "id": "ICEiIyQlJicoKSorLC0uLw",
+        "k": "4OHi4-Tl5ufo6err7O3u7_Dx8vP09fb3-Pn6-_z9_v8",
+        "wrap_nonce": "ERITFBUWFxgZGhsc",
+        "content_nonce": "IiMkJSYnKCkqKywt",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1769904000,\"id\":\"ICEiIyQlJicoKSorLC0uLw\",\"sfv\":\"1\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"you_means\":\"\",\"schema\":\"share_doc_v1\",\"edited\":false,\"banner_key\":\"relay_banner_shared_v1\",\"sections\":[{\"lines\":[\"Example line one.\"],\"heading\":\"Example heading\"}],\"topic\":\"Example topic\",\"visit_date\":\"2026-02-20\",\"banner_text\":\"Example banner text.\"}"
+      },
+      "derived": {
+        "kek": "4ipdQFBF30dt_Ch9BuW5vQiLs85_2gPJbrH0M070cPE"
+      },
+      "outputs": {
+        "wrapped_k": "ERITFBUWFxgZGhsc_mTzYKAGLV6G3EJ9onRT7la0d4ODkj7RN0ViPBUMdceFUVvEqtZHEbMYfRAQ7_2R",
+        "ciphertext": "IiMkJSYnKCkqKywtAAUDJwtnke_Z3PMuxU5XLPuyv6Ai17aLy6hDAruNTsLSwC_Sp-l07qDdUAGOgKNX-gdd10k0RfZJE3uP3Fjw9Xo1pu6ArS8RIZUSiHpc-WOqvj6o3A_H8zwDs3wmHijdYgLksuvyU6JKwdlUfwsEO06L0r4mWh3bkHM-a-jS1QWTtRikqwcNltPyKcN7ITgIMgPKKYJ_9lFvTgGhhx722QmW7sGPkJ1pBC1674-kQ_qbEJx8nIlwlbl8b76Y625A9Qe7p8HV909q0oJBz0ZVl-vskPqVEwK9rJpiBh7zj7-XhKZJSI479AmECEOfP1qg6-qgn2YV83xFPqfn2E1gnlTqdQmnmI2gyRbhZxw",
+        "fragment": "#v=link_split_v1&id=ICEiIyQlJicoKSorLC0uLw&a=oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8"
+      }
+    },
+    {
+      "name": "edited",
+      "note": "Edited before sharing, so both the document and the authenticated copy say so. One section with no lines.",
+      "inputs": {
+        "a": "MzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk9QUVI",
+        "b": "VVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3Q",
+        "id": "QEFCQ0RFRkdISUpLTE1OTw",
+        "k": "d3h5ent8fX5_gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZY",
+        "wrap_nonce": "mZqbnJ2en6ChoqOk",
+        "content_nonce": "u7y9vr_AwcLDxMXG",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":true,\"exp\":1772323200,\"id\":\"QEFCQ0RFRkdISUpLTE1OTw\",\"sfv\":\"abc123\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text.\",\"you_means\":\"Example Name\",\"edited\":true,\"visit_date\":\"2026-03-05\",\"topic\":\"Example topic\",\"sections\":[{\"heading\":\"Example heading\",\"lines\":[]}]}"
+      },
+      "derived": {
+        "kek": "Hv837gfaBCIVr2T__kCQNrHRGVZPaKMR2lAWE335v9k"
+      },
+      "outputs": {
+        "wrapped_k": "mZqbnJ2en6ChoqOkGiIszrRCtDBb9gdmgPaqYFjGPI6o1L0U8aoeOzScSlaiU8VdQQ8Ij7YRqFp2WFXP",
+        "ciphertext": "u7y9vr_AwcLDxMXGlQQkz_O_GKSloVlZXeoZ_6HMOpzs3j3-vYL6xwSi3ez5uJban0DtnBAUcUV3KQAV5voflTtuCZkM7wbC-e6Ec4I4-oOi1NBcJVfGRDruzzvBOugiPIv3B6W2MT00pax-OBrvGK9P0CVgzYQvsG0y8icuEGY4K82FzI43JD28_QsSFnP5LrSFl8qxFIGGb46-mQtqMKECOyQ94Zz7t9z9KkUYABD7L4GLeJuOxst-YtVr8RccDfbdmK6J1_Cq47GzhAUreA3rK7C-udkr_Kkzba98RKWpvxJtpzieYm9iR-fBwMb56YvhlAnY0KlC04NVXSq-tbaOQ0POdU7nd9gmwHkDeGMH",
+        "fragment": "#v=link_split_v1&id=QEFCQ0RFRkdISUpLTE1OTw&a=MzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk9QUVI"
+      }
+    },
+    {
+      "name": "wide-characters",
+      "note": "Text outside ASCII in every free-text field, and no sections at all. The plaintext is multi-byte UTF-8 and the decoder has to agree about it.",
+      "inputs": {
+        "a": "AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE",
+        "b": "BAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiM",
+        "id": "YGFiY2RlZmdoaWprbG1ubw",
+        "k": "CAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJic",
+        "wrap_nonce": "DA0ODxAREhMUFRYX",
+        "content_nonce": "Dg8QERITFBUWFxgZ",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1775001600,\"id\":\"YGFiY2RlZmdoaWprbG1ubw\",\"sfv\":\"1\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text — em dash, café, 日本語.\",\"you_means\":\"Éxample Nàme\",\"edited\":false,\"visit_date\":\"2026-04-11\",\"topic\":\"Ejemplo — 主题\",\"sections\":[]}"
+      },
+      "derived": {
+        "kek": "TmESzcbrLeHqydBa0K9lvT0Y-R_vOSmGKDy0jtb0qVI"
+      },
+      "outputs": {
+        "wrapped_k": "DA0ODxAREhMUFRYXVggkkbO4LGSXRAHMIdxKqGm8OqSWmmpzTptPqhVGft8FFV-NjDjHklm8iz0ZzzyN",
+        "ciphertext": "Dg8QERITFBUWFxgZiHM2YLGh5VDGhvfPNJgf54R6t7C7lGdFGkdNnUsOhWzIG6_8q3ADlfPyfEvja18TmFjBIyiV_C6A8ZQ7o8UI8JnEcgp1qfywQXN_7lvlA3w-p_n9WAv3C7xQFisdw-cymUTDMFmvvHw_WlY6MXespwC58cOmwsmrFsXM7x_NqBNMsajH91ZN1r13nry-1gk1Ev30VGE4dPL4fS3TaEOGurTGdLB-0cGeP-kfJnMkfAMde_GLx3oRq67uWhrJKbTrZmMcrDV5i6SWcJjFgmgyPswZ4rBhFcHsnBCvxnKHgFRojEzKAf6zaM_sp53eKParDvNlAwiSNr9gubErB-jVSvv-4Q",
+        "fragment": "#v=link_split_v1&id=YGFiY2RlZmdoaWprbG1ubw&a=AgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICE"
+      }
+    },
+    {
+      "name": "replacement-character",
+      "note": "The authenticated data carries U+FFFD, the replacement character. This exists so a reader can be tested for one specific mistake: encoding UTF-16 to UTF-8 maps an unpaired surrogate to the same three bytes as U+FFFD, so a reader that only checks the tag would accept a string spelled with a surrogate as though it were this one. The bytes sealed here are the bytes of this string, and no other string may authenticate against them.",
+      "inputs": {
+        "a": "gYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6A",
+        "b": "o6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr_AwcI",
+        "id": "gIGCg4SFhoeIiYqLjI2Ojw",
+        "k": "xcbHyMnKy8zNzs_Q0dLT1NXW19jZ2tvc3d7f4OHi4-Q",
+        "wrap_nonce": "KissLS4vMDEyMzQ1",
+        "content_nonce": "PD0-P0BBQkNERUZH",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1777680000,\"id\":\"gIGCg4SFhoeIiYqLjI2Ojw\",\"sfv\":\"1�\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text.\",\"you_means\":\"Example Name\",\"edited\":false,\"visit_date\":\"2026-05-19\",\"topic\":\"Example topic\",\"sections\":[{\"heading\":\"Example heading\",\"lines\":[\"Example line one.\"]}]}"
+      },
+      "derived": {
+        "kek": "MQ_lzFZfR7xMSxnXBSA8tnpgywzgnssGDAkNBVm_zQI"
+      },
+      "outputs": {
+        "wrapped_k": "KissLS4vMDEyMzQ1feM-_ufc6bez0jkCy7BoBM3rtDdH6WSG62xgvnfH5a4aoDOFgg7Xo3t70HuQzOlk",
+        "ciphertext": "PD0-P0BBQkNERUZHltAXo_eDbHP9MQS7BySfk-PPGf5BmSJm-j4kvk8ZOX5J94ug3PJ_3_Eee3sMJUd8iELoeDRsmuOQRIzZ47nLVBoXxEm9GPtMVgBQcEOwv6kZorgzf8ygoXvv4zmEpUuJVeusrPlFOx9T8bYx3Zs5hiMIAfaPIgmNnvsXu33FiKOxNK9Go16xmIxKHY4RjH_4qgc5n6KWuujVUtYNhUCsZyiBo2PBkSBLklv2GJEvaQVaOdKBCRwWqymzWIP4mxFll0ZlZYqya3aSsrL1BG2x2cxdsE2lGuKe-Q4ATSO9lw9iCrUXMFXaoxgLs4ao_oA69i2t9OIXPRzkhKbCr5hg-Pyo3NA0xuiutohXRSW5ZZVQh3DeOxpSPus",
+        "fragment": "#v=link_split_v1&id=gIGCg4SFhoeIiYqLjI2Ojw&a=gYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6A"
+      }
+    },
+    {
+      "name": "combining-marks",
+      "note": "Every string here is chosen so that tidying it would change it. The authenticated data and the document both carry decomposed sequences — a letter followed by a combining mark, where a precomposed character exists — so any normalisation, at any point, produces different bytes: before the tag check it breaks the tag, and on the way back out it hands the reader a string that was never sealed. The document is sealed with a trailing newline, so trimming it is visible too; the authenticated data is canonical JSON, which outer trimming cannot change, so there is no trimming of it to catch. None of this is a shape the sharing app produces; all of it is a shape a reader must not quietly repair, and the fixtures that came before it were all invariant under exactly the repairs worth catching.",
+      "inputs": {
+        "a": "ExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTI",
+        "b": "Nzg5Ojs8PT4_QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVY",
+        "id": "sLGys7S1tre4ubq7vL2-vw",
+        "k": "W1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo",
+        "wrap_nonce": "TU5PUFFSU1RVVldY",
+        "content_nonce": "b3BxcnN0dXZ3eHl6",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1780358400,\"id\":\"sLGys7S1tre4ubq7vL2-vw\",\"sfv\":\"1é\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text: café.\",\"you_means\":\"Éxample Nàme\",\"edited\":false,\"visit_date\":\"2026-06-24\",\"topic\":\"Ejemplo: niño\",\"sections\":[{\"heading\":\"Example heading\",\"lines\":[\"Example line one: resumé.\"]}]}\n"
+      },
+      "derived": {
+        "kek": "sYCQsq_MfFpzZEFRp8s8AkThEH9Lp6-VJXMbzfQmSU8"
+      },
+      "outputs": {
+        "wrapped_k": "TU5PUFFSU1RVVldYsazSqEu8ZZCNm6SUr_fFDG2ZoV5or7WKJUaBIuqT192waxy49kQazCCJjZchSBP6",
+        "ciphertext": "b3BxcnN0dXZ3eHl6JuEQFUf5zY9fFIJLqJqDgH9I2Yx8JCuXydS8C4Z72MhE6AxMFXuP61CLqqyOLKfXSh9idxsCBnjctUEZUt2ZbOgn8050Kdq4Jut8hFhDU9YBbv6AJPh-DogT8DpAPiJ33l0t9e_xfFJxj2so6qSA6araV7mLEjHCp506OEW_GpSnYXaYf6smLHhazRqDcmiMwwieKOpLMAqQhT2aCyfkReFXL2HzoUrEi7Lpzr-XgpGxwCAaQE4SysdKOXMrgk6STJuo_X21YaYAcBTMZ2h-XIFQCOzg4qiZcfmf72fjm-LWV-r9owDptKdpkiJ-nEQhc8hJCfQZlryVivb2doFIpBLGCCErbyt8uEqsdxC54PGrTLJnn6c90AY4KrRjri8HZjFhwLY_t4N40MD_-hhk1zbw",
+        "fragment": "#v=link_split_v1&id=sLGys7S1tre4ubq7vL2-vw&a=ExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTI"
+      }
+    },
+    {
+      "name": "astral-characters",
+      "note": "The authenticated data and the document both carry characters outside the basic multilingual plane, which a reader holds as surrogate pairs. This is the accepting direction of the well-formedness test that the replacement-character fixture puts the refusing direction of: a reader that refuses every surrogate — rather than every unpaired one — refuses every emoji and every astral character, and until this fixture existed no vector in the corpus contained one, so that mistake decrypted everything there was to decrypt.",
+      "inputs": {
+        "a": "JSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QEFCQ0Q",
+        "b": "R0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWY",
+        "id": "0NHS09TV1tfY2drb3N3e3w",
+        "k": "aWprbG1ub3BxcnN0dXZ3eHl6e3x9fn-AgYKDhIWGh4g",
+        "wrap_nonce": "Xl9gYWJjZGVmZ2hp",
+        "content_nonce": "ent8fX5_gIGCg4SF",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":true,\"exp\":1783036800,\"id\":\"0NHS09TV1tfY2drb3N3e3w\",\"sfv\":\"1😀\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text 😀.\",\"you_means\":\"Example Name\",\"edited\":true,\"visit_date\":\"2026-07-30\",\"topic\":\"Example topic 𝄞\",\"sections\":[{\"heading\":\"Example heading 📄\",\"lines\":[\"Example line one 😀.\"]}]}"
+      },
+      "derived": {
+        "kek": "tu55On1Fp4YINh_QyYw6CKLYa1TLjzyY3rStHn0-p88"
+      },
+      "outputs": {
+        "wrapped_k": "Xl9gYWJjZGVmZ2hpFJ__F-JdeNlvoA3EAyCY06SmuzHNOV0_caAOphjPunNDJGYjjmg3Bt1YEnfrVtln",
+        "ciphertext": "ent8fX5_gIGCg4SFexCai5BgOLvmy1uIDUp8U0MtYKQLOphCO-GqCzdCS1G3B1C8uvEHIybkWnQLcGZ6aSp9a7Dzujb4DmlJrjmqlsKhLUpTmpdWbS4-Qkq12jjdPHjmASz4X9T4D10uYhiY__exipJnxDl3IzcEoHeCkNSJMeXwML5kT6-e_XtGKFydLJU_NpU4Aw55qMRDdRFyc78_e-0jTn6aJMnygA5JMyG0EO7zL6YP_P7qhPvEHtXiIPpo7l3P7BumX-OGODGtVqy_-YzEmClCcjIxoHWHj5E3RP7A-2PY8RLCfNFc0fMjrrsohZt_sTelLX8ZMMREmMf9lV9nrU32qGrPNr54im_MC48JGX8T5_qVCDHbL7U-R_a1WRvY7Xm2FOB5eidBHb92ZyPunxnhP0eF",
+        "fragment": "#v=link_split_v1&id=0NHS09TV1tfY2drb3N3e3w&a=JSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QEFCQ0Q"
+      }
+    }
+  ],
+  "derivations": [
+    {
+      "name": "matches-named-fixture",
+      "note": "The same inputs as the named fixture, so a derivation failure and a decryption failure can be told apart.",
+      "inputs": {
+        "a": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+        "b": "MDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk8",
+        "id": "AAECAwQFBgcICQoLDA0ODw",
+        "info": "patientscribe/link_split_v1/kek",
+        "output_bytes": 32
+      },
+      "derived": {
+        "kek": "RJHKCOefKGDIz9q6ydCdyMCljYKCbXhFHNX9pftCgkk"
+      },
+      "probe": {
+        "k": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+        "nonce": "UFFSU1RVVldYWVpb",
+        "wrapped_k": "UFFSU1RVVldYWVpbJUO3FderVrzuCJdggZ1vD2_r1KgSl-bOZIxbM4WBo0HZqCQ8nTZYG5w2Z23fOpxo"
+      }
+    },
+    {
+      "name": "extreme-halves",
+      "note": "All-zero link capability, all-ones stored key, all-zero salt. Every byte of each is that value and no other.",
+      "inputs": {
+        "a": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "b": "__________________________________________8",
+        "id": "AAAAAAAAAAAAAAAAAAAAAA",
+        "info": "patientscribe/link_split_v1/kek",
+        "output_bytes": 32
+      },
+      "derived": {
+        "kek": "ap34aMFuRGJp8TMXsAs6DhnY0yz_2wEY09u0TTHSWvc"
+      },
+      "probe": {
+        "k": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+        "nonce": "UFFSU1RVVldYWVpb",
+        "wrapped_k": "UFFSU1RVVldYWVpbxfxKXMvj-RfoSWXwmQnEPwVH75aQrZ7P52asHsQLuWj_AdaZo9n9WFDChW7ePegz"
+      }
+    },
+    {
+      "name": "salt-sensitivity",
+      "note": "The halves of the previous derivation with a different salt: all-ones rather than all-zero. The derived key must be unrelated, so the previous probe must not unwrap under it.",
+      "inputs": {
+        "a": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "b": "__________________________________________8",
+        "id": "_____________________w",
+        "info": "patientscribe/link_split_v1/kek",
+        "output_bytes": 32
+      },
+      "derived": {
+        "kek": "xoCX5rU-Vy50QDU3-Dirzc4LfhsfZ9Cnh7nlayiXhAY"
+      },
+      "probe": {
+        "k": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+        "nonce": "UFFSU1RVVldYWVpb",
+        "wrapped_k": "UFFSU1RVVldYWVpbW-S8kQn9o7XkgkVNO-9MuYz_4vQbzbVq1fQ9YqDKvKxSpt5Vzjk9J6a8OWWkm6_F"
+      }
+    }
+  ],
+  "canonicalisations": [
+    {
+      "name": "member-order-is-not-input-order",
+      "note": "A share's authenticated data with its members written in a different order. Canonicalisation must reach the same bytes. This is the one record here whose input is a document this protocol carries; the three below are values chosen to put one rule of the form to a canonicaliser, and are not documents any part of this protocol accepts.",
+      "input": {
+        "sfv": "1",
+        "v": "link_split_v1",
+        "exp": 1767225600,
+        "doc": "share_doc_v1",
+        "id": "AAECAwQFBgcICQoLDA0ODw",
+        "edited": false
+      },
+      "canonical": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1767225600,\"id\":\"AAECAwQFBgcICQoLDA0ODw\",\"sfv\":\"1\",\"v\":\"link_split_v1\"}",
+      "expected": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1767225600,\"id\":\"AAECAwQFBgcICQoLDA0ODw\",\"sfv\":\"1\",\"v\":\"link_split_v1\"}"
+    },
+    {
+      "name": "string-escapes",
+      "note": "Short escapes for the characters that have them, and nothing escaped that does not need to be. Not a share's authenticated data: the member names and values are chosen to put the escaping rule to a canonicaliser, which the six fixed members of an authenticated document cannot do. Canonicalise it; do not accept it as a document.",
+      "input": {
+        "b": "quote\" backslash\\ tab\t newline\n unit\u001f",
+        "a": "plain"
+      },
+      "canonical": "{\"a\":\"plain\",\"b\":\"quote\\\" backslash\\\\ tab\\t newline\\n unit\\u001f\"}",
+      "expected": "{\"a\":\"plain\",\"b\":\"quote\\\" backslash\\\\ tab\\t newline\\n unit\\u001f\"}"
+    },
+    {
+      "name": "member-order-is-by-code-unit",
+      "note": "Sorting is by UTF-16 code unit, not by any locale's idea of alphabetical order. Not a share's authenticated data: the member names are chosen so that the two orderings disagree, which the fixed member names of an authenticated document cannot do. Canonicalise it; do not accept it as a document.",
+      "input": {
+        "é": 1,
+        "a": 2,
+        "Z": 3,
+        "": 4
+      },
+      "canonical": "{\"\":4,\"Z\":3,\"a\":2,\"é\":1}",
+      "expected": "{\"\":4,\"Z\":3,\"a\":2,\"é\":1}"
+    },
+    {
+      "name": "integers",
+      "note": "Integers as digits, with no exponent, no trailing zeros and no sign but a minus. Not a share's authenticated data: an authenticated document carries one integer and it is an expiry, so nothing in it can be zero or negative. Canonicalise it; do not accept it as a document.",
+      "input": {
+        "n": 0,
+        "neg": -1,
+        "big": 9007199254740991
+      },
+      "canonical": "{\"big\":9007199254740991,\"n\":0,\"neg\":-1}",
+      "expected": "{\"big\":9007199254740991,\"n\":0,\"neg\":-1}"
+    }
+  ]
+}

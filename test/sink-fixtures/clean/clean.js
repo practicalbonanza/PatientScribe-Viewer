@@ -20,3 +20,11 @@ export function attach(root, value) {
   });
   return node;
 }
+
+// Two spellings that a rule scoped to the other kind of file would match, and
+// which this file must produce no violation for. Scoping is a comparison like
+// any other: every case in the self-test asks whether a markup rule reaches a
+// markup file and whether a script rule reaches a script file, and none of them
+// asks whether either stops there. A rule declared for every extension is one
+// token from a rule declared for markup, and this line is what refuses it.
+export const attributeSpelling = ' onclick=';

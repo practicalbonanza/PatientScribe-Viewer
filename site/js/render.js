@@ -18,30 +18,110 @@
  * clear inside these functions also keeps every DOM write in one module, which
  * is what makes that claim checkable rather than merely stated.
  *
+ * A clear that does not happen is therefore not a step to carry on past. If the
+ * root cannot be emptied, whatever is on it is still on it, and drawing over
+ * that is the same failure as forgetting to clear — worst of all on the
+ * unavailable path, where the viewer would believe it had replaced a decrypted
+ * note with the generic surface while the note was still there. So `clearRoot`
+ * reports whether the root is empty, and both functions below draw nothing when
+ * it is not. That adds no failure shape anyone can see: a root that refuses to
+ * be written into is a root nothing can be drawn on either way.
+ *
+ * That guard is the one thing in this module no observation of it can show,
+ * because the surface drawn after a successful clear is, in this scaffold,
+ * nothing at all — so removing the branch and keeping the call changes no
+ * behaviour any input can reach. It is held in place by a reading of this file's
+ * own text, in the fast suite, alongside the other claims about these bytes that
+ * are true of the source rather than of any run.
+ *
  * Argument order is fixed across the chain — root, then AAD, then the document —
  * so a transposed call is visible on sight rather than only at the type level.
+ *
+ * Every function here is total, like every other exported function in the
+ * viewer. A root that is not an element to write into is a refusal — nothing is
+ * drawn and nothing is thrown — because these are the last functions in every
+ * path the viewer takes, including the failure paths, and a throw from the end
+ * of a failure path is a second failure shape reached from the first.
  *
  * Scaffold status: signatures, plus the clear. Every visible string in this
  * viewer is a controlled surface fixed elsewhere; none of them are drafted here,
  * and none are invented at the keyboard.
  */
 
-/** @import { ShareDocV1 } from './validate.js' */
+/** @import { AadV1, ShareDocV1 } from './validate.js' */
+
+/**
+ * Empty the root, and say whether it is now empty.
+ *
+ * The one DOM write in the viewer, so it is also the one place that write can be
+ * refused — and the answer matters to both callers, because a root that was not
+ * emptied is a root still showing whatever it was showing.
+ *
+ * The answer is read back from the root rather than inferred from the call. A
+ * call that returns is not a clear: the returned answer used to be `true` for
+ * anything whose `replaceChildren` did not throw, so a root that answered the
+ * call and kept its children reported itself empty, both render functions passed
+ * the guard, and each would have drawn over a note that was still on the page —
+ * which is precisely the failure the guard exists for. `firstChild` is what a
+ * node with no children answers `null` to, so asking it afterwards asks about
+ * the root's state rather than about the call's.
+ *
+ * `false` covers four different situations and deliberately does not tell them
+ * apart: the value is not something that can hold children, it has no way to
+ * replace them, replacing them failed, or it is not empty afterwards. Nothing
+ * above needs the difference, and every one of them means the same thing to a
+ * caller — do not draw.
+ *
+ * Exported so that "it reports whether the root is empty" is a property
+ * something can be asked about, which nothing else can ask: both callers do no
+ * more than branch on it, and the branch they take is invisible from outside
+ * this module for as long as the surface they draw after clearing is nothing.
+ * Nothing outside this module may call it: clearing is each render function's
+ * first act, and a caller that could clear is a caller that could clear and then
+ * draw nothing, or draw without clearing.
+ *
+ * @param {unknown} root
+ * @returns {boolean} Whether the root is empty.
+ */
+export function clearRoot(root) {
+  if (typeof root !== 'object' || root === null) {
+    return false;
+  }
+
+  try {
+    const clear = /** @type {Record<string, unknown>} */ (root)['replaceChildren'];
+    if (typeof clear !== 'function') {
+      return false;
+    }
+    clear.call(root);
+    return /** @type {Record<string, unknown>} */ (root)['firstChild'] === null;
+  } catch {
+    // Nothing to report and nowhere to report it. The refusal is silent by
+    // design, as every refusal in the viewer is — but it is not silent to this
+    // function's callers, who are told the root is not empty and must not draw
+    // over what is still there.
+    return false;
+  }
+}
 
 /**
  * Render a validated document into the viewer root.
  *
- * Empties the root before writing anything.
+ * Empties the root before writing anything, and writes nothing at all if it
+ * could not: drawing a note over a root that still holds an earlier one is the
+ * failure this ordering exists to prevent.
  *
- * @param {HTMLElement} root The viewer root element.
- * @param {unknown} aad The authenticated AAD — the sole display source for
- *   expiry and edited state. Left `unknown` at scaffold stage; the fields it
- *   carries arrive with the implementation that reads them.
+ * @param {unknown} root The viewer root element.
+ * @param {AadV1} aad The authenticated AAD — the sole display source for expiry
+ *   and edited state. Validated, like the document: nothing reaches here that a
+ *   validator has not already admitted.
  * @param {ShareDocV1} doc A document that has passed validation.
  * @returns {void}
  */
 export function renderShareDocV1(root, aad, doc) {
-  root.replaceChildren();
+  if (!clearRoot(root)) {
+    return;
+  }
   void aad;
   void doc;
 }
@@ -53,15 +133,26 @@ export function renderShareDocV1(root, aad, doc) {
  * safe landing point for a failure part-way through a render: whatever was on
  * screen goes, and the generic surface replaces it.
  *
+ * That order is load-bearing here in a way it is nowhere else, and so is what
+ * happens when the clear fails. The surface this draws is the one that says
+ * nothing; drawing it over a root that still holds a decrypted note would leave
+ * the note on screen while the viewer believed it had been replaced. So a failed
+ * clear draws nothing, and the page keeps whatever it already had rather than
+ * gaining a generic surface that would be a lie about what is underneath it.
+ *
  * Every failure the viewer can reach must end here — no exceptions, and no
  * variants. Whatever went wrong, and at whatever depth, the result on screen
  * must be the same bytes in the same shape, because the difference between one
  * failure and another is exactly the thing a recipient must not be able to
  * observe.
  *
- * @param {HTMLElement} root The viewer root element.
+ * @param {unknown} root The viewer root element.
  * @returns {void}
  */
 export function renderUnavailable(root) {
-  root.replaceChildren();
+  if (!clearRoot(root)) {
+    return;
+  }
+  // The surface is drawn from here. Scaffold: the clear is all there is so far,
+  // and the guard above is what the drawing will sit behind when it arrives.
 }

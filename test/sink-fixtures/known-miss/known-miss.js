@@ -4,8 +4,9 @@
 // line-based lexical scan cannot see through any of them. The self-test asserts
 // that this file produces zero violations. That assertion is the point: if a
 // future rule change starts catching one of these, the self-test fails, and the
-// coverage record gets updated deliberately instead of drifting into a claim
-// nobody checked.
+// list of misses below and the paragraph about the limits of this scan at the
+// top of check-sinks-core.mjs get updated deliberately instead of drifting into
+// a claim nobody checked.
 export function misses(el, value) {
   // A property name assembled at runtime.
   const assembled = 'inner' + 'HTML';

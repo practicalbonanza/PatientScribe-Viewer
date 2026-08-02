@@ -34,6 +34,25 @@
  *    accident and drift. The controls against an author who is actually trying
  *    are review, and CSP and Trusted Types at the origin.
  *
+ * One rule here is not about a sink at all, and it is worth saying why it lives
+ * here rather than looking like a stray. The typecheck step is pinned as two
+ * whole configurations, because the ways to turn a checker off are not a list
+ * anyone finishes — but a one-line comment turns it off for one module while
+ * both configurations still say exactly what they are pinned to say. Nothing
+ * that reads a configuration can see that. This scan reads every line of every
+ * served file, which makes it the only existing thing that can, so the
+ * suppression comments are a rule here rather than a second scanner somewhere
+ * else.
+ *
+ * That rule is declared for files of every extension, and until recently the
+ * only tree it was ever run over was `site/` — so the modules that decide
+ * whether any of these checks pass were outside its reach, and the second
+ * typecheck configuration covers exactly those. A comment at the top of one of
+ * them turned the checker off for the module that judges a suite, with the whole
+ * chain green. `check-sinks-selftest.mjs` now reads this rule over those modules
+ * as well, and the cost is the one this file's other patterns already impose:
+ * the spellings cannot be written plainly in the tree that is scanned for them.
+ *
  * This engine lives outside `site/` precisely so its own patterns are not in
  * scope for itself.
  */
@@ -43,6 +62,28 @@ import { extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+
+/**
+ * The tree this scan is for: the bytes that are served.
+ *
+ * Here rather than in the command-line front end, and exported, because the
+ * front end is where it used to be and nothing could see it there. Every rule
+ * below is pinned — the set, by an independent list; each rule's firing, by a
+ * fixture; each alternative of the rules that alternate, one by one — and none
+ * of that says a word about what the rules are run over. Repointing the default
+ * one directory down, at `site/css`, left `npm run check` exiting 0 while
+ * reporting "scanned 1 file(s) under site/css/ … PASS", with a genuine
+ * `innerHTML` assignment shipped in `site/js/render.js`. The manifest pins the
+ * command that starts this scan and cannot pin what the scan then looks at.
+ *
+ * So the target is a constant with a name, in the module the self-test already
+ * reads, and `check-sinks-selftest.mjs` holds it two ways: against a path
+ * written out there rather than derived from here, and against what a default
+ * invocation of the command line actually reported having scanned — the tree by
+ * name, the count of files it holds, and the served files that must be among
+ * them. A constant nothing compares against is a constant, not a pin.
+ */
+export const SHIPPED_TREE = join(REPO_ROOT, 'site');
 
 /** Marker meaning "this rule applies to every file, whatever its extension". */
 const ANY = 'any';
@@ -118,6 +159,14 @@ export const RULES = [
   {
     id: 'Function-constructor',
     files: ANY,
+    // The first alternative is contained in the second and is kept for reading
+    // rather than for reach: every line the `new Function(` branch matches
+    // carries `Function` followed by optional whitespace and `(`, which is
+    // exactly what `\bFunction\s*[(),]` matches, so deleting the first branch
+    // leaves the same set of lines refused. It is a redundancy on purpose — the
+    // constructed form is the one a reader looks for — and it is written down
+    // because a redundant alternative is otherwise indistinguishable from an
+    // alternative that has quietly stopped mattering.
     pattern: /\bnew\s+Function\s*\(|\bFunction\s*[(),]/,
     why: 'executes a string as code',
   },
@@ -231,6 +280,34 @@ export const RULES = [
     pattern: /(?<![.\w$])import\s*\(/,
     why: 'loads a module from a computed specifier',
   },
+  {
+    id: 'typecheck-suppression',
+    files: ANY,
+    // Not a sink, and here anyway. The typecheck step is pinned whole — both
+    // configurations, every option — on the reasoning that the ways to turn a
+    // checker off are not a list anyone finishes. A comment at the top of a
+    // shipped module turns it off for that module without touching either
+    // configuration, so the whole-configuration pin does not reach it and
+    // nothing else was looking. This scan already reads every line of every
+    // served file, which makes it the one place that reach exists.
+    //
+    // All three spellings the pattern names, including the one that is normally
+    // the disciplined choice: the checked variant fails once the error it was
+    // written for goes away, which makes it better practice than the blanket
+    // pair — but "better" is not the question here. Nothing in `site/` may be
+    // exempt from the checker, so the answer to a type error in a served file is
+    // to fix the type error.
+    //
+    // Spelled once, in the pattern, and nowhere else in this repository's own
+    // programs. This rule's reach now includes the modules the checks are made
+    // of, which are read for it by `check-sinks-selftest.mjs`, and a scan for a
+    // construct cannot tell the construct from a description of it. So the same
+    // cost this file's other patterns impose on `site/` — that their vocabulary
+    // cannot be written there — is now paid here as well, which is why the prose
+    // above names none of the three.
+    pattern: /@ts-(?:nocheck|ignore|expect-error)\b/,
+    why: 'turns the type checker off for served code',
+  },
 ];
 
 /**
@@ -266,6 +343,16 @@ export function collectFiles(root) {
 
   /** @type {string[]} */
   const found = [];
+  // Sorted so that a scan of one tree reports the same thing in the same order
+  // wherever it runs. Nothing here depends on the order: the file count, the
+  // count by extension and the set of violations are all the same set whatever
+  // sequence the directory is read in, and every case that reads a violation
+  // finds it rather than indexing to it. So no input separates this line from
+  // the same line without the sort, and on a filesystem that already answers in
+  // order — which is what this one does — nothing could separate them even in
+  // principle. What it buys is a report two people can compare, which is a
+  // property of the output rather than of the answer, and it is written down
+  // here because that is the only place it can be said.
   const entries = readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
 
   for (const entry of entries) {

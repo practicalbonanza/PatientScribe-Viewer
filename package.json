@@ -11,9 +11,11 @@
     "browsers": "playwright install --with-deps chromium webkit",
     "typecheck": "tsc --noEmit -p jsconfig.json && tsc --noEmit -p tsconfig.tooling.json",
     "check:sinks": "node scripts/check-sinks.mjs",
-    "check:sinks:self": "node --test scripts/check-sinks-selftest.mjs",
-    "test:smoke": "playwright test",
-    "check": "npm run typecheck && npm run check:sinks && npm run check:sinks:self && npm run test:smoke"
+    "check:self": "node scripts/run-node-tests.mjs self",
+    "test:fast": "node scripts/run-node-tests.mjs fast",
+    "test:smoke": "node scripts/run-browser-tests.mjs",
+    "vectors": "swift test/vectors/GenerateVectors.swift",
+    "check": "npm run typecheck && npm run check:sinks && npm run check:self && npm run test:fast && npm run test:smoke"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

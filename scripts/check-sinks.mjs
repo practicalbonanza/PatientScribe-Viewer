@@ -2,7 +2,8 @@
  * Forbidden-sink scan — the command line.
  *
  * Usage:
- *   node scripts/check-sinks.mjs           scans site/ — the default, and what CI runs
+ *   node scripts/check-sinks.mjs           scans the shipped tree — the default,
+ *                                          and what `npm run check` runs
  *   node scripts/check-sinks.mjs <dir>     scans <dir> — used by the self-test to
  *                                          exercise this file against fixture trees
  *
@@ -21,12 +22,19 @@
  * The rules and the tree walk live in `check-sinks-core.mjs`.
  */
 
-import { join, relative, resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 
-import { REPO_ROOT, RULES, ScanError, scanTree } from './check-sinks-core.mjs';
+import { REPO_ROOT, RULES, ScanError, scanTree, SHIPPED_TREE } from './check-sinks-core.mjs';
 
+// The default is `SHIPPED_TREE` rather than a path written here, and that is the
+// hole this closes rather than tidiness. The literal used to live on this line,
+// appeared once, and nothing compared it against anything: repointing it at
+// `site/css` left the whole chain green while a forbidden sink shipped in
+// `site/js/render.js`. What a scan is aimed at is as much a part of it as what
+// it looks for, so the target is named where the self-test can read it and is
+// held there against the tree by name and by what that tree holds.
 const argument = process.argv[2];
-const target = argument === undefined ? join(REPO_ROOT, 'site') : resolve(argument);
+const target = argument === undefined ? SHIPPED_TREE : resolve(argument);
 const label = `${relative(REPO_ROOT, target) || target}/`;
 
 /**
