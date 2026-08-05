@@ -47,12 +47,59 @@
  * configurations written below, and changing either of them means editing this
  * file, which is a visible, reviewable act.
  *
- * What this cannot do is check itself, and there is no arrangement in which it
- * could: `npm run check` is the root, and a chain rewritten to run nothing has
- * nothing left to notice. What it does instead is make every single-step
- * disabling visible from somewhere else — this module is read by both runners,
- * so silencing any one step leaves at least one other still asking. That is the
- * honest reach of it, and it is written down here rather than assumed.
+ * What this cannot do is check itself from inside the chain, and that limit is
+ * exact rather than absolute — the sentence here used to say no arrangement
+ * could, and that was false and was measured false.
+ *
+ * Inside the chain, the limit is real and it does not stop at one step. This
+ * module is read by the two runners, and those runners are reached only by
+ * `check:self`, `test:fast` and `test:smoke` — so silencing any one step in
+ * `package.json` leaves at least one other still asking, and silencing all three
+ * leaves nobody reading the manifest at all. It scales the whole way: with three,
+ * four and then all five step commands replaced by `true`, and the chain string
+ * left byte-identical, `npm run check` exits 0 having run the typecheck and the
+ * sink scan, then neither, and the shipped decoder was quietly repairing
+ * ill-formed bytes the entire time. Every step is one string in one file, and
+ * that file is the one being edited.
+ *
+ * The arrangement that does notice is an invocation that does not go through the
+ * manifest's script names to find its program. `.github/workflows/ci.yml` runs
+ * `node scripts/run-node-tests.mjs self` as a step of its own, beside the step
+ * that runs the chain. That runner calls `checkManifest(readManifest())` like
+ * any other, and because this module compares the whole manifest, one such
+ * invocation names every substituted step rather than the one it happens to be
+ * about — measured, at three, four and five silenced steps, each exiting 1 and
+ * listing all of them. It is one step for that reason and must stay one: a copy
+ * of the step list in the workflow would be a second definition of the checks
+ * that can drift from this one.
+ *
+ * So the residual is not "this cannot be checked". It is that a local
+ * `npm run check` can still be silenced from `package.json` alone, because
+ * locally the manifest is the entry point as well as the subject, and that CI
+ * does not share that blind spot because it enters by path as well as by name.
+ * What is left after that is `ci.yml` itself, which is a public file in a public
+ * repository whose diff is the reviewable act. `CONTRIBUTING.md` says the same
+ * thing where a reader will look for it.
+ *
+ * That sentence used to say "every single-step disabling", and it was false, for
+ * a reason worth writing down rather than quietly fixing. Every comparison above
+ * is between a pin and a value, and the value has to be fetched: two functions
+ * below do the one `readFileSync` that connects all of it to the files on disk.
+ * Nothing observed that either of them read anything. A `readManifest` returning
+ * the pinned scripts, and a `readConfigFile` returning the pinned configurations,
+ * are each one expression, and each left the whole chain green with the step it
+ * was hiding replaced by `true` and with type checking switched off over a
+ * shipped module carrying a blatant type error. The comparisons were perfect and
+ * they were being handed their own answers.
+ *
+ * So both readers now take the directory they read as an argument, defaulting to
+ * this repository, in the same shape `checkManifest`'s other two seams already
+ * have — and `test/node/core.test.mjs` points them at a scratch tree written to
+ * be wrong in exactly those two ways and requires the refusals to arrive. What is
+ * enforced after that is: a reader that answers without reading fails, because
+ * the tree it is pointed at says something no pin here says. What remains outside
+ * is what has always been outside — an author who edits this module and the file
+ * that holds it in the same change.
  *
  * No CLI, no exit codes, no output: this is importable from a test without doing
  * anything, which it has to be, because the tests that hold the pins below are
@@ -65,8 +112,14 @@ import { fileURLToPath } from 'node:url';
 
 export const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
-/** The manifest itself, which is also the one file none of this can do without. */
-export const MANIFEST_FILE = join(REPO_ROOT, 'package.json');
+/**
+ * The manifest itself, which is also the one file none of this can do without.
+ *
+ * Named relative to a root rather than as one absolute path, because the root is
+ * an argument to the reader below: this file's own is the default, and a test
+ * pointing that reader at a tree of its own is what shows the reader reads.
+ */
+export const MANIFEST_FILE = 'package.json';
 
 /**
  * The steps of `npm run check`, in order.
@@ -219,11 +272,23 @@ export const CHECK_CONFIGS = Object.freeze({
  * `checkManifest` reports as the failure it is rather than as an exception from
  * a module whose callers are runners.
  *
+ * `root` is an argument for the reason the two seams on `checkManifest` are, and
+ * it is the one this file was missing. Every pin above is a comparison against
+ * something this function returns, so a version of it that answers without
+ * reading anything satisfies all of them at once — and one that returns the
+ * pinned scripts is a single expression, which left `npm run check` exiting 0
+ * with the browser step replaced by `true` in `package.json` and the whole
+ * browser suite silently not run. Nothing anywhere observed that it had read a
+ * file, because nothing could point it at a file whose contents it did not
+ * already agree with.
+ *
+ * @param {string} [root] The directory to read the manifest from. This
+ *   repository by default; a test hands its own.
  * @returns {unknown}
  */
-export function readManifest() {
+export function readManifest(root = REPO_ROOT) {
   try {
-    return JSON.parse(readFileSync(MANIFEST_FILE, 'utf8'));
+    return JSON.parse(readFileSync(join(root, MANIFEST_FILE), 'utf8'));
   } catch {
     return null;
   }
@@ -232,12 +297,19 @@ export function readManifest() {
 /**
  * A configuration file, parsed, or `null` if it cannot be.
  *
- * @param {string} file A repository-relative path.
+ * Exported, and taking its root, for exactly the reason `readManifest` does: it
+ * performs the other read the pins above rest on, and a version of it returning
+ * `CHECK_CONFIGS[file]` left the chain green with `"checkJs": false` on disk and
+ * a type error shipped in `site/js/`. The default is this repository, which is
+ * what `checkManifest` uses when its caller names no reader.
+ *
+ * @param {string} file A root-relative path.
+ * @param {string} [root]
  * @returns {unknown}
  */
-function readConfigFile(file) {
+export function readConfigFile(file, root = REPO_ROOT) {
   try {
-    return JSON.parse(readFileSync(join(REPO_ROOT, file), 'utf8'));
+    return JSON.parse(readFileSync(join(root, file), 'utf8'));
   } catch {
     return null;
   }
@@ -250,6 +322,20 @@ function readConfigFile(file) {
  * Compared as text so that a configuration differing in the order its options
  * are written is the same configuration, and one differing in an option — or
  * carrying one more — is not.
+ *
+ * Serialising two values and comparing the strings is a comparison that collides
+ * in general: `JSON.stringify` spells `null` and `NaN` the same way, `0` and
+ * `-0` the same way, drops a member holding `undefined`, and writes a hole as
+ * `null`. None of those pairs can arise on either side here, and that is what
+ * makes this a residual rather than the loose comparison it looks like. One side
+ * is a configuration file, parsed from JSON, and JSON has no way to write `NaN`,
+ * no way to write a hole, no member without a value, and no `-0` that survives
+ * being written back out. The other side is a literal in this file whose whole
+ * job is to say what that parsed value must be, so it is written in the same
+ * vocabulary. The one value that could differ and does not collide is a member
+ * that is absent, which arrives here as `undefined` and is spelled `undefined`
+ * rather than dropped — see the last line of this function, which is why an
+ * option that has gone missing is a mismatch rather than a match.
  *
  * @param {unknown} value
  * @returns {string}
@@ -271,11 +357,20 @@ function canonicalise(value) {
 /**
  * Is a file a step names on disk?
  *
- * @param {string} file A repository-relative path.
+ * Exported so that it can be asked, which nothing did. It is the default behind
+ * `checkManifest`'s `fileExists` seam, and every call that used the default
+ * handed it a repository where every file is present — so it was only ever
+ * observed answering `true`, and the branch it feeds was only ever driven by the
+ * injected `() => false` beside it. A version of this returning `true` for
+ * anything at all would have satisfied the whole suite while the comparison it
+ * exists for silently stopped being able to fire.
+ *
+ * @param {string} file A root-relative path.
+ * @param {string} [root]
  * @returns {boolean}
  */
-function onDisk(file) {
-  return existsSync(join(REPO_ROOT, file));
+export function onDisk(file, root = REPO_ROOT) {
+  return existsSync(join(root, file));
 }
 
 /**

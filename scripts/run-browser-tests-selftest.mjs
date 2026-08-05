@@ -88,11 +88,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CHECK_COMMANDS, CHECK_CONFIGS, CHECK_FILES, CHECK_STEPS } from './check-manifest-core.mjs';
 import {
   checkBrowserRun,
   MINIMUM_EXECUTED_TESTS,
@@ -125,13 +126,32 @@ function fixtureConfig(name) {
  * @returns {{ status: number | null, stdout: string, stderr: string }}
  */
 function runRunner(args) {
+  return runRunnerAt(RUNNER, args);
+}
+
+/**
+ * Run a runner as a child process, the way a shell does.
+ *
+ * The program and the directory it is run from are arguments for two cases at
+ * the end of this file: one spawns a copy of the runner from a tree whose
+ * manifest is wrong, and one runs this repository's own runner with no
+ * configuration named, which is the shape `npm run check` uses and is the one
+ * that has to be run from this repository to mean anything. Every other call is
+ * `runRunner` above.
+ *
+ * @param {string} runner
+ * @param {string[]} args
+ * @param {string} [cwd]
+ * @returns {{ status: number | null, stdout: string, stderr: string }}
+ */
+function runRunnerAt(runner, args, cwd = undefined) {
   // This file is run by the fast-path runner, which marks its children so that a
   // nested test run refuses to execute any files. The child here is not a node
   // test run, but its own children are node processes and the mark travels.
   const environment = { ...process.env };
   delete environment['NODE_TEST_CONTEXT'];
 
-  const result = spawnSync(process.execPath, [RUNNER, ...args], { encoding: 'utf8', env: environment });
+  const result = spawnSync(process.execPath, [runner, ...args], { encoding: 'utf8', env: environment, cwd });
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
@@ -1013,4 +1033,203 @@ test('the names a run reported are measured from this suite\'s own directory', (
   // to a collection directory: nothing here can name a root for a configuration
   // it has never seen.
   assert.deepEqual(judge({ report: reportOf(whole, { rootDir: '/elsewhere/somewhere-else' }), exitCode: 0 }), []);
+});
+
+/**
+ * A tree that is a repository as far as the manifest check is concerned, with
+ * this runner copied into it.
+ *
+ * The counterpart of the one in `run-node-tests-selftest.mjs`, and it exists for
+ * the same reason: the manifest a runner reads is the one beside the program, so
+ * a copy of the program in a tree of this file's own making is a runner whose
+ * manifest this case gets to choose. Everything `checkManifest` reads is written
+ * here and says what the pins say, except for what the caller substitutes.
+ *
+ * `node_modules` is linked rather than copied. The runner resolves the browser
+ * harness relative to itself, so without it a run in this tree fails because the
+ * harness is missing, which is a different answer from the one being asked for.
+ *
+ * @param {Record<string, string>} substitutions Step names to the command each
+ *   should run instead of the one it is pinned to.
+ * @returns {{ root: string, runner: string }}
+ */
+function scratchRepository(substitutions) {
+  const root = mkdtempSync(join(tmpdir(), 'browser-manifest-'));
+
+  for (const files of Object.values(CHECK_FILES)) {
+    for (const file of files) {
+      const target = join(root, file);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, '');
+    }
+  }
+  for (const [file, config] of Object.entries(CHECK_CONFIGS)) {
+    writeFileSync(join(root, file), JSON.stringify(config, null, 2));
+  }
+  for (const program of ['run-browser-tests.mjs', 'run-browser-tests-core.mjs', 'check-manifest-core.mjs']) {
+    copyFileSync(fileURLToPath(new URL(`./${program}`, import.meta.url)), join(root, 'scripts', program));
+  }
+  symlinkSync(fileURLToPath(new URL('../node_modules', import.meta.url)), join(root, 'node_modules'), 'dir');
+
+  const scripts = { check: CHECK_STEPS.join(' && '), ...CHECK_COMMANDS, ...substitutions };
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts }, null, 2));
+
+  return { root, runner: join(root, 'scripts', 'run-browser-tests.mjs') };
+}
+
+test('a run spawned where the manifest is wrong is refused, and names the step', () => {
+  // That this runner *calls* the manifest check, which nothing asked. The cases
+  // for what that check answers are in `test/node/core.test.mjs` and none of them
+  // observes that any program invokes it: deleting `checkManifest(readManifest())`
+  // from this runner and from the node one left the whole gate exiting 0 with
+  // everything else pristine, because the manifest this repository has is sound
+  // in every spawn the suite makes and the call therefore contributes no failure
+  // whether it is there or not.
+  //
+  // The substituted step is this runner's own, which is the one a person
+  // silencing the browser suite would reach for, and the run is otherwise a
+  // healthy one: the fixture tree passes, so the only thing to report is the
+  // manifest.
+  const sound = scratchRepository({});
+  try {
+    const result = runRunnerAt(sound.runner, ['--config', fixtureConfig('passing')]);
+    assert.equal(result.status, 0, `a copy of the runner beside a sound manifest was refused:\n${result.stderr}`);
+    assert.ok(
+      !result.stderr.includes('`test:smoke` runs'),
+      `a sound manifest was reported as a silenced one:\n${result.stderr}`,
+    );
+  } finally {
+    rmSync(sound.root, { recursive: true, force: true });
+  }
+
+  const silenced = scratchRepository({ 'test:smoke': 'true' });
+  try {
+    const result = runRunnerAt(silenced.runner, ['--config', fixtureConfig('passing')]);
+    assert.equal(result.status, 1, 'a passing tree beside a silenced manifest was accepted');
+    assert.ok(
+      result.stderr.includes('`test:smoke` runs "true"'),
+      `the run did not report the silenced step:\n${result.stderr}`,
+    );
+  } finally {
+    rmSync(silenced.root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A spec file for the tree below: the titles this suite is required to carry in
+ * that file, and enough tests beside them for one engine alone to clear every
+ * floor.
+ *
+ * The titles are read from the policy for the reason the fixture tree under
+ * `browser-fixtures/passing/` reads them: a tree standing in for the real suite
+ * has to carry whatever that list says, and what pins the list itself is
+ * `test/node/core.test.mjs`, outside both. `omit` is what makes the refusing
+ * direction below a refusal about one named test rather than about a tree that
+ * is wrong in a dozen ways at once.
+ *
+ * @param {string} file
+ * @param {string | null} omit A required title to leave out, or `null`.
+ * @returns {string}
+ */
+function defaultSuiteSpec(file, omit) {
+  const titles = (REQUIRED_TESTS[file] ?? []).filter((title) => title !== omit);
+  const filler = Array.from(
+    { length: MINIMUM_EXECUTED_TESTS },
+    (_unused, index) => `a test that passes in ${file} (${index})`,
+  );
+  return [
+    "import { test } from '@playwright/test';",
+    ...[...titles, ...filler].map((title) => `test(${JSON.stringify(title)}, () => {});`),
+    '',
+  ].join('\n');
+}
+
+/**
+ * A repository whose own suite is the tree above, so that a run of it naming no
+ * configuration is a default invocation with an answer this file chose.
+ *
+ * The copied policy module resolves the configuration it requires, and the
+ * directory it requires the suite to be collected from, relative to itself — so
+ * in this tree they are this tree's own. That is what makes a default invocation
+ * here a real one: the harness finds the configuration by looking in the working
+ * directory, exactly as it does for `npm run check`, and the policy holds the run
+ * to the configuration beside the runner rather than to one named on a command
+ * line.
+ *
+ * @param {string | null} omit A required title to leave out of `core.spec.js`.
+ * @returns {{ root: string, runner: string }}
+ */
+function scratchDefaultRepository(omit) {
+  const { root, runner } = scratchRepository({});
+
+  writeFileSync(
+    join(root, 'playwright.config.js'),
+    [
+      "import { defineConfig } from '@playwright/test';",
+      '',
+      'export default defineConfig({',
+      "  testDir: 'test',",
+      "  projects: [{ name: 'chromium' }, { name: 'webkit' }],",
+      '});',
+      '',
+    ].join('\n'),
+  );
+  mkdirSync(join(root, 'test'), { recursive: true });
+  for (const file of REQUIRED_SPEC_FILES) {
+    writeFileSync(join(root, 'test', file), defaultSuiteSpec(file, file === 'core.spec.js' ? omit : null));
+  }
+
+  return { root, runner };
+}
+
+test('the default invocation this repository ships exits 0', () => {
+  // The shape `npm run check` actually uses, and the one nothing here had ever
+  // driven. Every fixture case above names its configuration on the command line,
+  // and the one default case runs from a directory with no configuration to find,
+  // so it is about a default invocation that fails — leaving the pair
+  // `named === null` and `exitCode === 0` a combination no case reached. A runner
+  // that skipped every judgement on exactly that pair exited 0, and exited 0
+  // again with the browser corpus collected out of the suite, which is the whole
+  // browser path running nothing in either engine and saying so nowhere.
+  //
+  // Driven from a tree of this file's own rather than by running this
+  // repository's suite, and that is a structural requirement rather than a
+  // preference for speed. `test/core.spec.js` spawns both named node suites, one
+  // of which is the suite this file belongs to — so a case here that ran the real
+  // browser suite would spawn a run of itself, without end. The tree below is a
+  // repository as far as the copied policy is concerned, so the default
+  // invocation it takes is the real branch with an answer this file chose.
+  //
+  // Both directions, because either alone is satisfiable by the wrong runner: one
+  // that refused every default invocation would pass the second, and one that
+  // judged none of them would pass the first.
+  const sound = scratchDefaultRepository(null);
+  try {
+    const result = runRunnerAt(sound.runner, [], sound.root);
+    assert.equal(result.status, 0, `a sound default invocation was refused:\n${result.stdout}\n${result.stderr}`);
+    assert.ok(result.stdout.includes('test:smoke — '), 'the default run printed no summary line');
+    for (const engine of REQUIRED_ENGINES) {
+      assert.ok(result.stdout.includes(`in ${engine}`), `the default run reported nothing for ${engine}`);
+    }
+  } finally {
+    rmSync(sound.root, { recursive: true, force: true });
+  }
+
+  // And the same invocation over a suite one required test short. The harness
+  // still exits 0 — nothing failed, a test is simply not there — so this is the
+  // successful default path being judged, which is the branch a bypass on
+  // `named === null && exitCode === 0` removes.
+  const missing = REQUIRED_TESTS['core.spec.js']?.[0];
+  assert.ok(missing !== undefined, 'the policy requires no test of the corpus spec file');
+  const short = scratchDefaultRepository(missing);
+  try {
+    const result = runRunnerAt(short.runner, [], short.root);
+    assert.equal(result.status, 1, 'a default invocation missing a required test was accepted');
+    assert.ok(
+      result.stderr.includes(missing),
+      `the refusal did not name the missing test:\n${result.stderr}`,
+    );
+  } finally {
+    rmSync(short.root, { recursive: true, force: true });
+  }
 });

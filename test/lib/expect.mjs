@@ -111,6 +111,13 @@ export const MINIMUM_CASES = 485;
  * witness, because both refuse the same inputs and differ only in what was
  * copied on the way.
  *
+ * `cost` was the one of the six the paragraph above was wrong about: it stood at
+ * seven against eight cases, so the kind it describes as having nothing to spare
+ * had one case nothing held up, and the sentence naming it exact was false of
+ * it. Since the slack case was one of the two the paragraph says have no other
+ * witness, the fix is the number rather than the claim: it is eight, and every
+ * one of the eight now has to be there.
+ *
  * @type {Readonly<Record<string, number>>}
  */
 export const MINIMUM_CASES_BY_KIND = Object.freeze({
@@ -119,7 +126,7 @@ export const MINIMUM_CASES_BY_KIND = Object.freeze({
   capability: 1,
   clear: 15,
   constants: 1,
-  cost: 7,
+  cost: 8,
   decrypt: 66,
   derive: 9,
   dispatch: 26,
@@ -155,12 +162,129 @@ export const MINIMUM_PROBES = 230;
 const ACCESSOR_FIELDS = ['take1', 'take2', 'take3', 'reparsedTake'];
 
 /**
+ * Are these the same value?
+ *
+ * Value equality, walked, rather than two serialisations compared as text. The
+ * text comparison this replaces was one call and it collided: `JSON.stringify`
+ * writes `null` for `null` and for `NaN`, writes `0` for `0` and for `-0`, drops
+ * a member whose value is `undefined` so that a field holding nothing and a
+ * field that is not there spell the same object, and writes `null` for a hole
+ * and for a `null` element. Every one of those pairs is a case observing one
+ * thing while requiring the other and being reported as a match — and the first
+ * of them is reachable from one token in the driver, where the value that stands
+ * for "there was nothing to report" is written.
+ *
+ * `Object.is` for the leaves, which is what makes `NaN` equal to itself and `0`
+ * different from `-0`. Own property names and own symbols for the rest, so a
+ * property that does not enumerate is compared like any other and a value hidden
+ * under a symbol is not a value nothing looks at. Membership is asked as well as
+ * value, which is what separates a field holding `undefined` from a field that
+ * is absent, and an array's hole from an element that is `null`: a hole is not
+ * an own property, and `length` is one, so both differences are differences in
+ * the name list before any value is read.
+ *
+ * The walk's domain is what an observation can be, and that is narrower than
+ * "any value" — it is what crosses out of a page and back as a report, which is
+ * JSON-shaped: records, lists, strings, numbers, booleans, `null` and
+ * `undefined`. Nothing here observes a `Date`, a `RegExp`, a `Map`, a `Set` or a
+ * boxed primitive, and no observation can carry one, so the walk does not look
+ * at what those keep in their internal slots. That is a documented residual
+ * rather than a hole, and it is left as one deliberately — handling internal
+ * slots would be machinery for values this comparison cannot be handed.
+ *
+ * Which of them the residual actually covers is worth stating exactly, and
+ * saying "a boxed primitive" is not exact — the three boxes do not behave alike.
+ * A `Date`, a `Map`, a `Set`, a boxed `Number` and a boxed `Boolean` all keep
+ * everything they hold in internal slots and carry no own properties at all, so
+ * two different ones of any of those do compare equal here. A `RegExp` does not:
+ * it carries an own `lastIndex`, which this walk reads like any other own
+ * property — so two of them agree only while that number does, which is by
+ * accident rather than by design and is not a comparison of the pattern. A boxed
+ * string is the one box that is further still from the rule: it carries an own
+ * index per character and an own `length`, so two different ones compare unequal,
+ * and reasoning about the boxes from that one is what made the earlier version of
+ * this paragraph wrong. The residual is therefore about the five with nothing own
+ * on them, and the reason is that they have no own state rather than no own
+ * *enumerable* state — this walk does not filter on enumerability anywhere, which
+ * is the point made two paragraphs above.
+ *
+ * It is also not the pair a reader might expect it to be: a `Date` and the
+ * string it serialises as are told apart by the type test at the top of this
+ * function, which refuses to compare an object with anything that is not one,
+ * and never reach the walk at all.
+ *
+ * What it deliberately does not compare is the order own properties are listed
+ * in, because that is not part of a value. Order is a claim the corpus makes
+ * elsewhere, separately, and over some of what the viewer builds rather than all
+ * of it. What is pinned: `keys` and `ownNames` are read off the parsed link and
+ * compared as lists; `aadKeys` and `docKeys` are read off the one validated
+ * record each of those two observations carries, at its top level. What is not:
+ * `resultKeys` is `Object.keys(...).sort()` at all three of the driver sites
+ * that report it, so it says which names a result carries and can say nothing
+ * about the order they came in; the records nested inside a validated document —
+ * a section, and the lines under it — carry no key list at all; and no
+ * observation reports the order of anything below a record's top level. So a
+ * field set that arrived in a different order is a failure where a list is
+ * compared, and is nothing anywhere else.
+ *
  * @param {unknown} left
  * @param {unknown} right
  * @returns {boolean}
  */
 function same(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  if (Object.is(left, right)) {
+    return true;
+  }
+  // Everything that is not an object is settled by the line above: two distinct
+  // primitives are two values, and a function is only ever equal to itself.
+  if (typeof left !== 'object' || typeof right !== 'object' || left === null || right === null) {
+    return false;
+  }
+  // A list and a record are different values however alike their properties are.
+  // Guarded because `Array.isArray` throws on a revoked proxy, and an
+  // observation is allowed to be anything at all.
+  try {
+    if (Array.isArray(left) !== Array.isArray(right)) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+
+  const leftNames = Object.getOwnPropertyNames(left);
+  const rightNames = Object.getOwnPropertyNames(right);
+  if (leftNames.length !== rightNames.length) {
+    return false;
+  }
+  const leftSymbols = Object.getOwnPropertySymbols(left);
+  const rightSymbols = Object.getOwnPropertySymbols(right);
+  if (leftSymbols.length !== rightSymbols.length) {
+    return false;
+  }
+
+  const leftFields = /** @type {Record<string, unknown>} */ (left);
+  const rightFields = /** @type {Record<string, unknown>} */ (right);
+  for (const name of leftNames) {
+    if (!Object.prototype.hasOwnProperty.call(right, name)) {
+      return false;
+    }
+    if (!same(leftFields[name], rightFields[name])) {
+      return false;
+    }
+  }
+
+  const leftKeyed = /** @type {Record<symbol, unknown>} */ (left);
+  const rightKeyed = /** @type {Record<symbol, unknown>} */ (right);
+  for (const symbol of leftSymbols) {
+    if (!Object.prototype.hasOwnProperty.call(right, symbol)) {
+      return false;
+    }
+    if (!same(leftKeyed[symbol], rightKeyed[symbol])) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -208,6 +332,18 @@ function checkCorpus(cases, probes, secrets) {
     seen.add(item.name);
     const kind = kindOf(item);
     byKind.set(kind, (byKind.get(kind) ?? 0) + 1);
+    // The floors are counted over the name, and the question is asked by the
+    // `kind` field: the name decides which floor a case is credited to, and the
+    // field decides which branch of the driver runs. Written down as agreeing
+    // and held by nothing, those are two counts of two different things wearing
+    // one number — a case renamed into a kind it is not run as clears that
+    // kind's floor without asking anything of it, and leaves the kind it is
+    // actually run as one case shorter with no line anywhere to say so.
+    if (kind !== item.kind) {
+      failures.push(
+        `${item.name} is counted as a ${kind} case and is run as a ${String(item.kind)} case, so it clears a floor for a question it does not ask`,
+      );
+    }
   }
 
   for (const name of [...duplicated].sort()) {
@@ -391,8 +527,17 @@ export function checkObservations({ cases, probes, secrets, results }) {
         continue;
       }
       if (!same(observed[field], expected)) {
+        // The message is a serialisation and the comparison above is not, so
+        // there are failures this line cannot show: the pairs `JSON.stringify`
+        // spells identically are exactly the ones the comparison was rewritten
+        // to separate, and a reader handed `was null, expected null` has been
+        // told nothing. So when the two spell the same way, the line says so.
+        const was = JSON.stringify(observed[field]);
+        const wanted = JSON.stringify(expected);
         failures.push(
-          `${item.name}: ${field} was ${JSON.stringify(observed[field])}, expected ${JSON.stringify(expected)}`,
+          `${item.name}: ${field} was ${was}, expected ${wanted}${
+            was === wanted ? ' — two different values that serialise the same way' : ''
+          }`,
         );
       }
     }
@@ -409,6 +554,26 @@ export function checkObservations({ cases, probes, secrets, results }) {
       if (!Object.prototype.hasOwnProperty.call(item.expect, field)) {
         failures.push(
           `${item.name}: observed ${field} = ${JSON.stringify(observed[field])}, which the case does not name`,
+        );
+      }
+    }
+
+    // And the same direction for a field kept under a symbol, which the list
+    // above does not return. `getOwnPropertyNames` is names only, so a
+    // symbol-keyed field on an observation was compared when a case happened to
+    // carry a symbol of its own and was otherwise a field nothing asked about —
+    // the one place a value could sit on a reported observation and be neither
+    // named nor refused. It is also the place a value would be put deliberately:
+    // no ordinary enumeration shows it.
+    //
+    // Described by the symbol rather than keyed by it, because two symbols with
+    // the same description are two different keys and the report is for a reader.
+    for (const symbol of Object.getOwnPropertySymbols(observed)) {
+      if (!Object.prototype.hasOwnProperty.call(item.expect, symbol)) {
+        failures.push(
+          `${item.name}: observed ${String(symbol)} = ${JSON.stringify(
+            /** @type {Record<symbol, unknown>} */ (observed)[symbol],
+          )}, which the case does not name`,
         );
       }
     }

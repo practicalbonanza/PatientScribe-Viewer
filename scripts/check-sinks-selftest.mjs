@@ -18,7 +18,7 @@
  *   - And every alternative every rule names is refused, one by one. "It fired
  *     somewhere" is the wrong question for any rule whose pattern is a list, and
  *     most of these are: one rule names five ways to parse a string as markup,
- *     one names eight elements that fetch or execute, one names seven URL-
+ *     one names nine elements that fetch, execute or carry CSS, one names seven URL-
  *     bearing properties, one names four ways to navigate. A rule with one
  *     alternative deleted still fires on the fixture lines that use the others,
  *     so the rule set stayed complete, every rule stayed "fired", and a whole
@@ -165,6 +165,7 @@ const EXPECTED_RULE_IDS = [
   'string-timer',
   'active-element-creation',
   'dynamic-import',
+  'network-egress',
   'typecheck-suppression',
 ];
 
@@ -199,6 +200,45 @@ test('the rule set matches the independently pinned list', () => {
     expected,
     'the rule set changed — if that was deliberate, update EXPECTED_RULE_IDS in this file',
   );
+
+  // And which files each rule applies to, which is a second field of every rule
+  // and was not pinned by anything at all.
+  //
+  // It is read — `appliesTo` compares a file's extension against it — but nothing
+  // said what any rule's value should be, and a narrowing is invisible from
+  // every other case here. Every rule that fires in the violations tree fires on
+  // a `.js` file, so narrowing a rule from every file to script files leaves that
+  // tree reporting exactly what it reported before: `network-egress` narrowed to
+  // scripts kept all of these green while a beacon in a `.html` file stopped
+  // being a violation. The two rules that are genuinely narrow are narrow for a
+  // reason — an inline handler is a markup construct and a handler property is a
+  // script one — and every other rule is about a construct that means the same
+  // thing wherever it is written, so it applies everywhere.
+  //
+  // Written as the exceptions plus "everything else is every file", rather than
+  // as twenty-two entries, so that a rule added without a scope decision is
+  // caught by the same assertion rather than by somebody remembering to add a
+  // line.
+  const narrowed = Object.freeze({
+    'inline-event-attribute': ['.html', '.htm', '.xhtml', '.svg'],
+    'event-handler-property': ['.js', '.mjs'],
+  });
+  for (const rule of RULES) {
+    const expectedFiles = narrowed[/** @type {keyof typeof narrowed} */ (rule.id)];
+    if (expectedFiles === undefined) {
+      assert.equal(
+        rule.files,
+        'any',
+        `${rule.id} applies to some files rather than all of them, and nothing here decided that`,
+      );
+      continue;
+    }
+    assert.deepEqual(
+      [...rule.files].sort(),
+      [...expectedFiles].sort(),
+      `${rule.id} applies to a different set of files than the one pinned here`,
+    );
+  }
 });
 
 test('every rule fires on at least one violation fixture', () => {
@@ -268,9 +308,18 @@ const RULE_ALTERNATIVES = Object.freeze({
   // a bare global call.
   navigation: ['location.assign(', 'location.replace(', 'location = ', 'window.open(', '= open('],
   'string-timer': ['setTimeout(', 'setInterval('],
-  // Eight elements that fetch, execute, or carry CSS. A list of names is the
-  // most fragile shape a rule here has: any one of them can go with the other
-  // seven still firing.
+  // Nine elements that fetch, execute, or carry CSS. A list of names is the most
+  // fragile shape a rule here has: any one of them can go with the other eight
+  // still firing.
+  //
+  // Nine rather than the eight this said until now, and the eight was not a
+  // miscount at the time: `style` was added to the rule when a style element's
+  // text content was recognised as an injection sink of its own, the list of
+  // spellings below was extended with it, and these two sentences were not. A
+  // count written in prose beside a list is a claim about the list, so it is
+  // read as one — the assertion under it is what actually holds every name, and
+  // this is here so that a reader comparing the two is not told the wrong
+  // number.
   'active-element-creation': [
     "createElement('script'",
     "createElement('iframe'",
@@ -282,6 +331,17 @@ const RULE_ALTERNATIVES = Object.freeze({
     "createElement('form'",
     "createElement('style'",
   ],
+  // Five ways off the page, sharing nothing but where the data ends up. One is
+  // matched as a call and four as names; all five are one rule, so any one of
+  // them could go with the rule still firing on the other four.
+  //
+  // Six spellings for the five, because `sendBeacon` is listed twice on purpose:
+  // called, and captured with no call on the line. The rule's own comment says
+  // every name but `fetch` is matched as a name, and for a while that was true of
+  // the sentence and not of the pattern — `sendBeacon` was anchored to its call,
+  // so a captured reference went through while the called spelling below kept
+  // this passing. The captured spelling is what tells the two apart.
+  'network-egress': ['fetch(', 'sendBeacon(', 'sendBeacon;', 'XMLHttpRequest', 'WebSocket', 'EventSource'],
   // The three comments, assembled rather than written, for the reason
   // `SUPPRESSION_SPELLINGS` is.
   'typecheck-suppression': SUPPRESSION_SPELLINGS,
@@ -564,6 +624,90 @@ test('script rules reach .mjs, not only .js', () => {
   );
 
   assert.ok(inMjs.length > 0, 'script-scoped rules did not apply to a .mjs file');
+});
+
+test('the scan reads every line of a file, and every extension it is handed', () => {
+  // Three readings that decide how much of a tree is actually looked at, none of
+  // which any fixture could see. Every fixture under `test/sink-fixtures/` is
+  // under a hundred lines and every one of them is named in lower case, so a
+  // scan that read the first two hundred lines of a file, or that treated an
+  // extension it did not recognise as nothing to scan, or that exempted one
+  // extension from every rule that applies to any file, answered exactly the
+  // same on all of them — while the shipped tree it is aimed at carries files
+  // several hundred lines long.
+  const dir = mkdtempSync(join(tmpdir(), 'sink-selftest-'));
+  try {
+    // How far into a file the scan reaches. Deliberately past the end of
+    // anything this repository holds, so this is a claim about the reading
+    // rather than about the length of some file that might shrink.
+    const deep = 4000;
+    const write = `el.${'inner'}HTML = 'x';\n`;
+    writeFileSync(join(dir, 'deep.js'), `${'const value = 1;\n'.repeat(deep - 1)}${write}`);
+    const deepHits = scanTree(dir).violations.filter((violation) => violation.file.endsWith('deep.js'));
+    assert.ok(
+      deepHits.some((violation) => violation.line === deep),
+      `a violation on line ${deep} was not reported, so the scan does not read a whole file`,
+    );
+    rmSync(join(dir, 'deep.js'));
+
+    // And the extension, which decides which rules apply at all. It is read
+    // through a normalisation nothing observed: an upper-case name is the same
+    // extension, and a scan that compared it as written would silently drop every
+    // rule scoped to a kind of file. Both scoped rules, because they are scoped
+    // to different lists.
+    writeFileSync(join(dir, 'SHOUTED.JS'), 'el.onclick = handler;\n');
+    writeFileSync(join(dir, 'SHOUTED.HTML'), '<a onclick="go()">go</a>\n');
+    const shouted = scanTree(dir).violations;
+    assert.ok(
+      shouted.some((violation) => violation.file.endsWith('SHOUTED.JS') && violation.rule === 'event-handler-property'),
+      'a script-scoped rule did not apply to a file whose extension is spelled in upper case',
+    );
+    assert.ok(
+      shouted.some((violation) => violation.file.endsWith('SHOUTED.HTML') && violation.rule === 'inline-event-attribute'),
+      'a markup-scoped rule did not apply to a file whose extension is spelled in upper case',
+    );
+    rmSync(join(dir, 'SHOUTED.JS'));
+    rmSync(join(dir, 'SHOUTED.HTML'));
+
+    // And that a rule which applies to any file applies to any file. The reading
+    // that decides it is one expression, and an extension exempted there is a
+    // whole kind of served file nothing looks at — with every fixture still
+    // reporting exactly what it reported before, because each of them is one
+    // extension asking about its own rules. So one text is written out under
+    // every extension the shipped tree could carry, and the rules that fire have
+    // to be the same rules each time.
+    const text = readFileSync(join(FIXTURES, 'violations', 'sinks.js'), 'utf8');
+    const anyRules = new Set(RULES.filter((rule) => rule.files === 'any').map((rule) => rule.id));
+    assert.ok(anyRules.size > 0, 'no rule applies to any file, so this asks nothing');
+
+    const extensions = ['.js', '.mjs', '.html', '.htm', '.xhtml', '.svg', '.css', '.txt', ''];
+    for (const extension of extensions) {
+      writeFileSync(join(dir, `same${extension}`), text);
+    }
+    const spread = scanTree(dir).violations;
+    /** @param {string} extension */
+    const firedIn = (extension) =>
+      [
+        ...new Set(
+          spread
+            .filter((violation) => violation.file.endsWith(`same${extension}`))
+            .map((violation) => violation.rule)
+            .filter((rule) => anyRules.has(rule)),
+        ),
+      ].sort();
+
+    const expected = firedIn('.js');
+    assert.ok(expected.length > 1, 'the shared text does not break enough rules for this to be a comparison');
+    for (const extension of extensions) {
+      assert.deepEqual(
+        firedIn(extension),
+        expected,
+        `the rules that apply to any file did not all apply to ${JSON.stringify(extension || 'a file with no extension')}`,
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('a symlinked entry in the scanned tree fails the scan closed', () => {

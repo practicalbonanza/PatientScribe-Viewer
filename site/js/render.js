@@ -140,11 +140,46 @@ export function renderShareDocV1(root, aad, doc) {
  * clear draws nothing, and the page keeps whatever it already had rather than
  * gaining a generic surface that would be a lie about what is underneath it.
  *
- * Every failure the viewer can reach must end here — no exceptions, and no
- * variants. Whatever went wrong, and at whatever depth, the result on screen
- * must be the same bytes in the same shape, because the difference between one
- * failure and another is exactly the thing a recipient must not be able to
- * observe.
+ * Every failure the viewer can reach must end in this function — no exceptions,
+ * and no variants. That is a requirement on the paths that lead here and not yet
+ * a fact about anything drawn: this function draws no surface, so what a
+ * recipient sees today is whatever an emptied root looks like, and "the same
+ * bytes in the same shape" is what that will be once there is a surface rather
+ * than something these bytes currently do. The reason the requirement is written
+ * down before the surface exists is that it is the surface's whole
+ * specification: whatever went wrong, and at whatever depth, what is drawn must
+ * be identical, because the difference between one failure and another is
+ * exactly the thing a recipient must not be able to observe.
+ *
+ * Where the requirement stands today, written out rather than asserted, because
+ * three refusals do not route here and one family of them has no route at all
+ * yet.
+ *
+ * Routed: an unrecognised document version, which is every version not in the
+ * dispatch table and every declared version that is not a string; a refusal from
+ * either validator; and the disagreement between what the document says about
+ * having been edited and what the authenticated data says. The last three arrive
+ * as one refusal from the resolution step, and every null the validators get
+ * back from the parsing helpers they use is inside one of them.
+ *
+ * Not routed, deliberately, in the two places a clear can fail. A render
+ * function whose clear failed returns without drawing and does not call this,
+ * because this would attempt the same clear on the same root and fail the same
+ * way — a second failed write is not a surface. And this function's own failed
+ * clear is where that stops. Both leave the page holding what it already held,
+ * which is the outcome the guard is for.
+ *
+ * Not routed, because there is nothing to route to: the entry point returns when
+ * the document has no viewer root in it. There is no element to draw on, so
+ * there is no call to make.
+ *
+ * Scaffold residual: the refusals in the link parser and in the decryption
+ * module are not on this list, and they are not exceptions to it — nothing in
+ * the page's module graph calls them yet. The entry point does not read the link
+ * or fetch anything, and the decryption module is not imported by anything the
+ * page loads. When those paths are wired up, each of their refusals has to land
+ * here, and until they are, "every refusal routes here" is a claim about the
+ * refusals that have a caller.
  *
  * @param {unknown} root The viewer root element.
  * @returns {void}

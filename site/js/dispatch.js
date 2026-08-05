@@ -20,10 +20,14 @@
  * display source for expiry and edited state, and this module is where the
  * `share_doc.edited === aad.edited` equality check lives — in the resolution
  * step for the version that requires it, which the handler for that version
- * calls. The document's own `edited` field is only what the plaintext claims;
- * the AAD's copy is covered by the content tag. Where the two disagree, the
- * document is not the document that was shared, and disagreement is a refusal
- * rather than a choice between them.
+ * calls. Both copies are protected by the same tag — it covers the ciphertext
+ * the document was decrypted from and the authenticated data alike, so neither
+ * can be altered and still arrive. What differs is the role each one plays. The
+ * AAD's copy is the one place expiry and edited state are read from, so there is
+ * a single spelling of each for anything downstream to show; the document's own
+ * `edited` field is the plaintext's description of itself. Where the two
+ * disagree, the document is not the document that was shared, and disagreement
+ * is a refusal rather than a choice between them.
  *
  * Argument order is fixed across the chain — root, then AAD, then the document —
  * so a transposed call is visible on sight rather than only at the type level.

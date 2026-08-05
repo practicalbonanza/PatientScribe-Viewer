@@ -33,7 +33,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
@@ -43,6 +45,8 @@ import {
   CHECK_FILES,
   CHECK_STEPS,
   checkManifest,
+  onDisk,
+  readConfigFile,
   readManifest,
 } from '../../scripts/check-manifest-core.mjs';
 import {
@@ -55,6 +59,7 @@ import {
   REQUIRED_SPEC_FILES,
   REQUIRED_TESTS,
 } from '../../scripts/run-browser-tests-core.mjs';
+import { SUITES as NODE_SUITES } from '../../scripts/run-node-tests-core.mjs';
 import { buildCases, canonicalJson, CASE_FIELDS, observableCases, vectors } from '../lib/cases.mjs';
 import { observeCases } from '../lib/driver.mjs';
 import {
@@ -230,6 +235,134 @@ test('a corpus that has lost one family of cases fails', () => {
   }
 });
 
+test('the cases that ask what the decoder does with ill-formed bytes are there, by name', () => {
+  // A per-kind floor is a count, and a count cannot tell one case from another.
+  // The decryption floor sits below what that kind carries — deliberately, so
+  // ordinary additions do not touch it — which means these four could be deleted
+  // together and every floor would still be clear. What they hold is the one
+  // flag deciding whether a document whose bytes are not well-formed UTF-8 is
+  // refused or handed back repaired, with U+FFFD standing in for whatever the
+  // bytes were, and there is nothing else in the corpus that asks. So they are
+  // named here, outside the file that builds them, in the shape the browser
+  // suite's required titles are named: a list, written out, compared whole.
+  //
+  // Whole rather than a subset, because "not well-formed UTF-8" is four
+  // different mistakes with four different repairs and the flag is one flag —
+  // any one of them going is a shape nobody asks about any more.
+  //
+  // The list also carries the one case in this group that is not about the flag
+  // at all: a document sealed over `c2 80`, which is well-formed UTF-8 for a C1
+  // control. It is named here with the rest because it is the same kind of thing
+  // — a shape the counts cannot hold up — and because what it asks is the other
+  // half of what this step does. The four say the decoder does not repair what
+  // it cannot read; that one says it does not quietly drop what it can. Deleting
+  // U+0080 from the decoded string left every one of the corpus's cases green,
+  // because no other document here carries a code point that shows as nothing.
+  const { cases } = buildCases();
+  const sealedOver = cases
+    .filter((item) => item.name.startsWith('decrypt/document-sealed-over-'))
+    .map((item) => item.name)
+    .sort();
+  assert.deepEqual(sealedOver, [
+    'decrypt/document-sealed-over-a-byte-that-begins-no-sequence',
+    'decrypt/document-sealed-over-a-continuation-byte-with-no-lead',
+    'decrypt/document-sealed-over-a-control-character-that-shows-as-nothing',
+    'decrypt/document-sealed-over-a-sequence-that-stops-early',
+    'decrypt/document-sealed-over-a-surrogate-spelled-as-three-bytes',
+    'decrypt/document-sealed-over-the-code-point-below-the-surrogates',
+    'decrypt/document-sealed-over-the-replacement-character-itself',
+    'decrypt/document-sealed-over-the-sequence-that-stops-early-completed',
+  ]);
+
+  /** @param {string} name */
+  const byName = (name) => {
+    const found = cases.find((item) => item.name === name);
+    assert.ok(found !== undefined, `${name} is not in the corpus`);
+    return found;
+  };
+
+  // And what each of them requires, because a name is not a question. Every one
+  // of the four is sealed over the same document as the ones that must decrypt,
+  // under the same content key and over the same authenticated data, so the only
+  // thing left that could refuse them is the decode — and the group below is what
+  // says so, since a refusal arriving from the tag, a length, or the base64
+  // reading would take one of them with it.
+  //
+  // The content key and not the nonce, though they share that too. A nonce
+  // travels inside the blob and is handed to the decryption from there, so a case
+  // sealed under a different one decrypts just the same and the sharing carries
+  // no weight. It is the key that has to be the one the wrap arrives at.
+  for (const what of [
+    'a-byte-that-begins-no-sequence',
+    'a-continuation-byte-with-no-lead',
+    'a-sequence-that-stops-early',
+    'a-surrogate-spelled-as-three-bytes',
+  ]) {
+    const item = byName(`decrypt/document-sealed-over-${what}`);
+    assert.deepEqual(item.expect, { ok: false, plaintext: null, aad: null }, `${what} no longer requires a refusal`);
+    assert.ok(item.reseal?.bytes !== undefined, `${what} is no longer sealed over bytes, so it cannot be ill-formed`);
+  }
+
+  // And the key all seven seal under, which is what makes the four a question
+  // about the decode at all rather than four assertions that something refused.
+  //
+  // A refusal does not say where it came from. Sealed under a key the viewer
+  // will not arrive at, each of the four refuses at the tag, reports exactly the
+  // refusal its case requires, and passes with the decode never reached — so the
+  // one flag those cases hold could be turned over with all four still green.
+  // That was the state until this line: the sentence above said they share a
+  // key, and nothing asked. What closes it is that the ones which must decrypt
+  // seal under the same key, so a key that stops being the wrapped one takes
+  // those down — they are required to come back whole, and a control that stops
+  // decrypting cannot be read as a pass.
+  //
+  // Read off the built cases rather than off the expression that built them, so
+  // this is a claim about what the corpus holds and not a restatement of one
+  // line of the file that produced it.
+  const publishedKey = Array.from(Buffer.from(vectors.fixtures[0].inputs.k, 'base64url'));
+  for (const name of sealedOver) {
+    assert.deepEqual(
+      byName(name).reseal?.k,
+      publishedKey,
+      `${name} is no longer sealed under the fixture's own content key, so a refusal from it says nothing about the decode`,
+    );
+  }
+
+  // The three that must decrypt: two of them one byte from an ill-formed
+  // sibling, and one that is what the four refusals are not about. Read as the
+  // bytes they are sealed over rather than as the characters they end in, so
+  // this says the share carries the sequence rather than that a string was
+  // spelled a particular way.
+  //
+  // The third is `ef bf bd`, which is well-formed UTF-8 for a document
+  // containing U+FFFD. Without it the four refusals could be satisfied by a
+  // decoder that repaired ill-formed bytes to that character and then refused
+  // any document carrying one: every refusal the four require would arrive, and
+  // no other document in this corpus carries a U+FFFD to notice. What that
+  // decoder does to a share nobody tampered with is collapse it into the same
+  // unavailable state a tampered one gets. So the four are about ill-formed
+  // bytes, and this is the case that says so.
+  for (const [what, sequence] of /** @type {[string, number[]][]} */ ([
+    ['the-sequence-that-stops-early-completed', [0xe2, 0x82, 0xac]],
+    ['the-code-point-below-the-surrogates', [0xed, 0x9f, 0xbf]],
+    ['the-replacement-character-itself', [0xef, 0xbf, 0xbd]],
+  ])) {
+    const item = byName(`decrypt/document-sealed-over-${what}`);
+    assert.equal(item.expect['ok'], true, `${what} no longer requires the share to decrypt`);
+    assert.deepEqual(
+      (item.reseal?.bytes ?? []).slice(-sequence.length),
+      sequence,
+      `${what} is no longer sealed over the sequence it is named for`,
+    );
+    assert.equal(
+      typeof item.expect['plaintext'] === 'string' &&
+        item.expect['plaintext'].endsWith(Buffer.from(sequence).toString('utf8')),
+      true,
+      `${what} no longer requires the decoded document to carry what was appended to it`,
+    );
+  }
+});
+
 test('two cases with one name are a failure', () => {
   // A name collision loses a question without losing a line, so a corpus can
   // report more cases than it asks. Two derivation cases were called
@@ -272,6 +405,23 @@ test('an observation carrying a field its case does not name is a failure', () =
     'a field hidden from enumeration was not compared against what the case names',
   );
 
+  // And a spare kept under a symbol, which is the same claim about the other
+  // kind of key. The list this direction was read from returns names only, so a
+  // symbol-keyed field on an observation was the one thing that could arrive
+  // reported and be neither named by the case nor refused as unnamed — and it is
+  // the key somebody would choose for exactly that reason, since no ordinary
+  // enumeration shows it.
+  /** @type {Record<string | symbol, unknown>} */
+  const symbolSpare = { ...first.expect };
+  symbolSpare[Symbol.for('spare')] = 1;
+  results[0] = { name: first.name, observed: symbolSpare };
+  assert.ok(
+    checkObservations({ cases, probes, secrets, results }).some((line) =>
+      line.includes('which the case does not name'),
+    ),
+    'a field kept under a symbol was not compared against what the case names',
+  );
+
   // And a field the case names but nothing observed is a failure too, rather
   // than a comparison of `undefined` against `undefined`.
   const [field] = Object.keys(first.expect);
@@ -282,6 +432,101 @@ test('an observation carrying a field its case does not name is a failure', () =
   assert.ok(
     checkObservations({ cases, probes, secrets, results }).some((line) => line.includes('was not observed at all')),
   );
+});
+
+test('the comparison separates values one serialisation spells the same way', () => {
+  // What a case requires and what the driver observed used to be compared by
+  // serialising both and comparing the text, and `JSON.stringify` is not
+  // injective: it writes `null` for `null` and for `NaN`, `0` for `0` and for
+  // `-0`, drops a member whose value is `undefined`, and writes `null` for a
+  // hole and for a `null` element. Each of those is a pair a case could observe
+  // one of while requiring the other and be reported as a match — and the first
+  // pair is one token away in the driver, where the value that stands for "there
+  // was nothing to hand back" is written.
+  //
+  // Every pair below is asserted to be a genuine collision before it is asserted
+  // to be caught, so this is a test about the comparison rather than about five
+  // values that happen to differ.
+  //
+  // And every one of them is a pair the walk settles, which is the point of the
+  // list. A pair separated by the type test in front of the walk — an object and
+  // the string it serialises as, which is what a value carrying a `toJSON`
+  // produces — belongs to a different claim: it holds the guard, not the
+  // comparison, and reading it as coverage of the walk was reading confidence
+  // into the wrong line. The last pair is the walk one level down, where the
+  // recursion is the only thing that can find the difference.
+  const { cases, probes, secrets } = buildCases();
+  const [first] = cases;
+  assert.ok(first !== undefined);
+
+  /**
+   * One case's requirement and its observation, both replaced by a single
+   * field, with every other case answered honestly.
+   *
+   * @param {unknown} expected
+   * @param {unknown} observed
+   * @returns {string[]}
+   */
+  const compared = (expected, observed) => {
+    const swapped = cases.map((item) => (item === first ? { ...item, expect: { only: expected } } : item));
+    const results = swapped.map((item) => ({ name: item.name, observed: { ...item.expect } }));
+    results[0] = { name: first.name, observed: { only: observed } };
+    return checkObservations({ cases: swapped, probes, secrets, results });
+  };
+
+  // Equal values are still equal, including the one a text comparison and a
+  // value comparison disagree about in the other direction.
+  assert.deepEqual(compared(null, null), []);
+  assert.deepEqual(compared([1, 2], [1, 2]), []);
+  assert.deepEqual(compared({ a: 1, b: [2, null] }, { a: 1, b: [2, null] }), []);
+  assert.deepEqual(compared(Number.NaN, Number.NaN), []);
+
+  // And the symbol side's accepting direction, which nothing here had. Every
+  // symbol case below is a pair that must be told apart, and the walk can tell
+  // any pair apart by refusing all of them: deleting the `!` from the symbol
+  // membership test made two objects that both carry a symbol compare unequal
+  // always, and every one of those cases passed exactly as before. This is the
+  // pair that has to come back equal — two separately built records carrying the
+  // same registered symbol and the same value under it — so the branch is pinned
+  // to be a membership test rather than a refusal.
+  assert.deepEqual(
+    compared({ a: 1, [Symbol.for('probe')]: 2 }, { a: 1, [Symbol.for('probe')]: 2 }),
+    [],
+    'two records carrying the same symbol and the same value under it were not equal',
+  );
+
+  /** @type {[string, unknown, unknown][]} */
+  const collisions = [
+    ['a refusal and a number that is not one', null, Number.NaN],
+    ['zero and the other zero', 0, -0],
+    ['a field holding nothing and a field that is not there', { a: undefined }, {}],
+    ['a hole in a list and a null in one', [null, 1], [, 1]],
+    ['a field holding nothing and a field that is not there, one level down', { a: { b: undefined } }, { a: {} }],
+    // A value under a symbol, which is not so much a `JSON.stringify` collision
+    // as a value it cannot see at all: it walks own string keys and nothing
+    // else, so a property under a symbol is invisible to it whatever is in
+    // there. The comparison reads own symbols as well as own names, and these
+    // three pairs are what say so. Both directions, because they are held by
+    // different lines: the walk lists the observation's own symbols and looks
+    // for each on the requirement, so a symbol the observation carries and the
+    // case does not is caught by that list, while a symbol the case requires and
+    // the observation does not carry is caught only by the count in front of it.
+    // Until both were here, that count could go with nothing to notice.
+    ['a value under a symbol the case does not require', { a: 1 }, { a: 1, [Symbol.for('probe')]: 2 }],
+    ['a value under a symbol nothing observed', { a: 1, [Symbol.for('probe')]: 2 }, { a: 1 }],
+    ['two values under the same symbol', { a: 1, [Symbol.for('probe')]: 2 }, { a: 1, [Symbol.for('probe')]: 3 }],
+  ];
+  for (const [what, expected, observed] of collisions) {
+    assert.equal(
+      JSON.stringify({ only: expected }),
+      JSON.stringify({ only: observed }),
+      `${what} are not spelled the same way, so this pair holds nothing`,
+    );
+    assert.ok(
+      compared(expected, observed).some((line) => line.startsWith(`${first.name}: only`)),
+      `${what} were compared as the same value`,
+    );
+  }
 });
 
 test('the confinement scan reaches a thrown value and a symbol-keyed one', () => {
@@ -401,6 +646,7 @@ test('the browser path is invoked through the runner that fails closed, and both
   assert.deepEqual(
     [...(REQUIRED_TESTS['smoke.spec.js'] ?? [])].sort(),
     [
+      'the bytes the server hands back are the bytes on disk',
       'the development server refuses anything outside the tree it serves',
       'the engine running this project is the engine the project names',
       'the page is served and its module graph runs without error',
@@ -425,6 +671,135 @@ test('the browser path is invoked through the runner that fails closed, and both
         );
       }
     }
+  }
+});
+
+test('the self suite is required to run every check that is about another check, by title', () => {
+  // The other half of the pair the fast path's runner is pinned by, and the
+  // outside end of it. Each suite names the tests it is built from, and a list a
+  // suite keeps about itself is a list that suite can shorten: emptying the self
+  // suite's titles where they live would leave every floor clear and every one
+  // of these checks skippable one line at a time. So they are written out here,
+  // from the other suite — the self suite's titles are pinned by this file,
+  // which is the fast suite, and the fast suite's titles are pinned by
+  // `scripts/run-node-tests-selftest.mjs`, which is the self suite. Neither can
+  // quietly shorten its own.
+  //
+  // This is the browser path's arrangement on the node runner: `REQUIRED_TESTS`
+  // is pinned by a test in this file rather than by one in the suite it governs,
+  // for the same reason and against the same edit.
+  const self = NODE_SUITES['self'];
+  assert.ok(self !== undefined, 'the runner no longer knows a suite called self');
+
+  assert.deepEqual(Object.keys(self.requiredTests).sort(), [
+    'check-attribution-selftest.mjs',
+    'check-sinks-selftest.mjs',
+    'run-browser-tests-selftest.mjs',
+    'run-node-tests-selftest.mjs',
+  ]);
+
+  assert.deepEqual(
+    [...(self.requiredTests['check-attribution-selftest.mjs'] ?? [])].sort(),
+    [
+      'a commit merged in from a branch is still read',
+      'a commit no branch points at is still read',
+      'a history with commits in it is read, and read field by field',
+      'a message that cannot be read, and a command line that is not one, are refused',
+      'a message with nothing to report is accepted',
+      'each rule refuses a message that breaks only that rule, in each spelling it has',
+      'the history this repository has is accepted, and an empty one is not',
+      'the hook is on disk, executable, and refuses what it is for',
+      'the rules are the rules this check is pinned to have',
+      'the workflow reads the whole history, and reads it with this check',
+    ],
+  );
+
+  assert.deepEqual(
+    [...(self.requiredTests['check-sinks-selftest.mjs'] ?? [])].sort(),
+    [
+      'a symlinked entry in the scanned tree fails the scan closed',
+      'a symlinked scan root fails the scan closed',
+      'a tree with exactly one violation is a failure',
+      'a violation is reported at the line and with the text it is on',
+      'a violation on a line longer than the report is truncated to the reported width',
+      'an empty tree cannot be scanned, and says so',
+      'every alternative every rule names is refused',
+      'every punctuation the code-execution rules name is refused',
+      'every rule fires on at least one violation fixture',
+      'every spelling of a typecheck suppression is refused',
+      'markup rules reach every configured markup extension',
+      'no module the checks are made of turns the type checker off',
+      'script rules reach .mjs, not only .js',
+      'the clean fixture produces no violations',
+      'the command line exits 0 on a clean tree',
+      'the command line exits 1 and prints FAIL on a violations tree',
+      'the command line exits 2 on a missing tree',
+      'the command line still scans when reached through a symlinked path',
+      'the documented known misses are still missed',
+      'the invocation that names no tree scans the shipped one',
+      'the rule set matches the independently pinned list',
+      'the scan reads every line of a file, and every extension it is handed',
+    ],
+  );
+
+  assert.deepEqual(
+    [...(self.requiredTests['run-browser-tests-selftest.mjs'] ?? [])].sort(),
+    [
+      'a command line that is neither documented form exits 1',
+      'a default invocation that did not load this configuration exits 1',
+      'a passing tree exits 0',
+      'a path that merely extends another is not that path',
+      'a required test is the one at the top of its file, not one of its name inside a group',
+      'a required test is the one this suite carries, not one of its name elsewhere',
+      'a run spawned where the manifest is wrong is refused, and names the step',
+      "a run that named no configuration must have loaded this repository's own",
+      'a test whose last attempt did not pass is a failure, whatever the outcome was called',
+      'a tree of nothing but skipped tests exits 1',
+      'a tree run in one engine exits 1',
+      'a tree with a failing test exits 1, and for that reason',
+      'a tree with exactly one reason to be refused exits 1',
+      'a tree with the corpus collected out exits 1',
+      'an absent configuration exits 1',
+      'each counting floor refuses the count below it and admits the count at it',
+      'the default invocation this repository ships exits 0',
+      "the names a run reported are measured from this suite's own directory",
+      'the run policy answers the questions it is asked',
+      'what a run reported is counted exactly',
+    ],
+  );
+
+  assert.deepEqual(
+    [...(self.requiredTests['run-node-tests-selftest.mjs'] ?? [])].sort(),
+    [
+      'a command line that names no suite exits 1',
+      'a required test missing from a run is a failure that names it',
+      'a run spawned where the manifest is wrong is refused, and names the step',
+      'a tree of nothing but empty groups exits 1',
+      'a tree of nothing but pending tests exits 1',
+      'a tree of nothing but skipped tests exits 1',
+      'a tree of passing tests exits 0',
+      'a tree whose every test passes and whose file-level hook throws exits 1',
+      'a tree whose every test passes and whose group body throws exits 1',
+      'a tree whose smallest file sits on the per-file floor is judged by which side of it',
+      'a tree with a failing test exits 1, and for that reason',
+      'a tree with one file skipped out exits 1',
+      'an absent tree exits 1',
+      'an empty tree exits 1',
+      'each suite is where the runner looks for it, and holds what it is built from',
+      'the count the runner reports is the count the reporter saw',
+      'the run policy answers the questions it is asked',
+      'the same tree answers the same whether it is named or given as a tree',
+    ],
+  );
+
+  // And every file the self suite is required to collect names at least one
+  // test, so a file listed as required but required to run nothing in particular
+  // cannot sit in the suite with all of its tests skipped out.
+  for (const file of self.required) {
+    assert.ok(
+      (self.requiredTests[file] ?? []).length > 0,
+      `${file} is required to be collected and no test in it is required to run`,
+    );
   }
 });
 
@@ -473,6 +848,20 @@ test('the manifest check refuses each way a step can be silenced', () => {
   // And a step naming a runner that is not there, which is a command that does
   // nothing while reading exactly right.
   assert.ok(checkManifest(pinned, () => false).some((line) => line.includes('runs nothing')));
+
+  // The seam shows the branch works against any answer; what it cannot show is
+  // that the default answer is a reading of the disk. Every call that takes the
+  // default hands it this repository, where every file a step names is present,
+  // so `onDisk` was only ever observed saying `true` — and a version of it that
+  // said `true` about everything would leave the comparison above unable to
+  // fire, with nothing anywhere disagreeing. Both directions, on files whose
+  // presence and absence are not in doubt.
+  assert.equal(onDisk('package.json'), true, 'a file that is there was reported missing');
+  assert.equal(
+    onDisk('a-file-this-repository-does-not-have.json'),
+    false,
+    'a file that is not there was reported present, so the branch that refuses a missing runner can never fire',
+  );
 
   // What that comparison is aimed at, which is a different question from whether
   // it bites. The seam above shows the branch works against any list; the list
@@ -568,6 +957,130 @@ test('the manifest check refuses each way a step can be silenced', () => {
     }
   }
 
+  // And the two reads themselves, which is what every line above rests on and
+  // what nothing was asking. Each comparison here is between a pin and a value,
+  // and the value arrives from one `readFileSync` in each of the two readers. A
+  // `readManifest` that returns the pinned scripts, and a `readConfigFile` that
+  // returns the pinned configurations, are one expression each: with the first,
+  // `npm run check` exited 0 with `"test:smoke": "true"` in the manifest and the
+  // entire browser suite — both engines, the served-bytes corpus, the served-page
+  // smoke test — not run and nothing saying so; with the second it exited 0 with
+  // `"checkJs": false` on disk and a blatant type error in a shipped module. The
+  // comparisons were as thorough as ever and were being handed their own answers.
+  //
+  // So the readers are pointed at a tree written here, and the refusals are
+  // required to arrive. Two directions, because either alone is satisfiable by
+  // the wrong function: a reader that always refuses passes the damaged tree, and
+  // a reader that never reads passes the sound one.
+  //
+  // Called directly rather than through a spawned run, and that is a deliberate
+  // exception to how the rest of this repository pins its runners. What is being
+  // pinned here is a file read — whether these two functions return what is on
+  // disk — and not a wiring decision about which program invokes what. That
+  // wiring is pinned in the ordinary way, by a spawned run in each of the two
+  // self-tests: `run-node-tests-selftest.mjs` and `run-browser-tests-selftest.mjs`
+  // each carry `a run spawned where the manifest is wrong is refused, and names
+  // the step`, which copies its runner into a tree whose manifest is wrong and
+  // requires the refusal to arrive. That claim used to be made here in prose and
+  // was false — neither self-test mentioned the manifest, the real one is sound
+  // in every spawn, and the call contributed no failure whether it was there or
+  // not.
+  //
+  // Two trees rather than one, asked in an interleaved order, each asked twice,
+  // and each carrying a value nothing outside it can know. A single tree written
+  // sound and then damaged is a question asked in a fixed order from one place,
+  // and a reader that answers by counting its calls — the pins for the first
+  // scratch call, a damaged manifest for the second — passes both directions
+  // having read nothing at all. With the real manifest damaged beside it, the
+  // whole gate exited 0 and the browser suite did not run.
+  //
+  // The nonce is what closes it rather than the ordering. An order can be
+  // predicted by a reader carrying a list of answers, and a count can be keyed on
+  // the root it is handed; a fresh random value written into each file and
+  // required to come back is a thing a reader can only produce by reading, and it
+  // is never passed to the reader in any form.
+  const sound = mkdtempSync(join(tmpdir(), 'manifest-read-sound-'));
+  const damaged = mkdtempSync(join(tmpdir(), 'manifest-read-damaged-'));
+  try {
+    /** @type {Map<string, string>} */
+    const nonces = new Map();
+    /** @param {string} root @param {{ smoke: string, checkJs: boolean }} how */
+    const writeTree = (root, { smoke, checkJs }) => {
+      const nonce = randomUUID();
+      nonces.set(root, nonce);
+      const scripts = { check: CHECK_STEPS.join(' && '), ...CHECK_COMMANDS, 'test:smoke': smoke };
+      // A member `checkManifest` reads nothing from, so what it changes is the
+      // bytes on disk and nothing about the answer.
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ nonce, scripts }, null, 2));
+      for (const file of Object.keys(CHECK_CONFIGS)) {
+        const config = JSON.parse(JSON.stringify(CHECK_CONFIGS[file]));
+        // A documentation key, which the comparison ignores at every level, for
+        // the same reason.
+        config['// nonce'] = nonce;
+        if (file === 'jsconfig.json') {
+          config.compilerOptions.checkJs = checkJs;
+        }
+        writeFileSync(join(root, file), JSON.stringify(config, null, 2));
+      }
+    };
+    /** @param {string} root @returns {string[]} */
+    const readTree = (root) =>
+      checkManifest(
+        readManifest(root),
+        () => true,
+        (file) => readConfigFile(file, root),
+      );
+
+    writeTree(sound, { smoke: CHECK_COMMANDS['test:smoke'] ?? '', checkJs: true });
+    writeTree(damaged, { smoke: 'true', checkJs: false });
+
+    // What is on disk, read back. A reader answering from the pins, or from a
+    // list of canned answers, or from the root it was handed, cannot produce
+    // these.
+    for (const root of [sound, damaged]) {
+      const manifest = readManifest(root);
+      assert.equal(
+        /** @type {Record<string, unknown>} */ (manifest)?.['nonce'],
+        nonces.get(root),
+        'the manifest reader answered without reading the file it was pointed at',
+      );
+      for (const file of Object.keys(CHECK_CONFIGS)) {
+        const config = readConfigFile(file, root);
+        assert.equal(
+          /** @type {Record<string, unknown>} */ (config)?.['// nonce'],
+          nonces.get(root),
+          `the configuration reader answered without reading ${file} in the tree it was pointed at`,
+        );
+      }
+    }
+
+    // And the two answers, asked in an order that is not sound-then-damaged and
+    // asked more than once each: the same tree has to give the same answer
+    // however many questions have come before it.
+    for (const root of [damaged, sound, damaged, sound]) {
+      const failures = readTree(root);
+      if (root === sound) {
+        assert.deepEqual(
+          failures,
+          [],
+          'a tree that says what the pins say was refused, so the readers refuse rather than read',
+        );
+        continue;
+      }
+      assert.ok(
+        failures.some((line) => line.includes('`test:smoke`')),
+        'a manifest whose browser step is `true` was accepted, so nothing observes that the manifest is read',
+      );
+      assert.ok(
+        failures.some((line) => line.startsWith('jsconfig.json') && line.includes('checkJs')),
+        'a jsconfig with checkJs off was accepted, so nothing observes that the configurations are read',
+      );
+    }
+  } finally {
+    rmSync(sound, { recursive: true, force: true });
+    rmSync(damaged, { recursive: true, force: true });
+  }
+
   // The manifest as it actually is, last, so the cases above are a comparison
   // rather than the only thing this asks — and it reads the configurations off
   // disk, so the pins above are pins on those files rather than on a copy.
@@ -633,13 +1146,35 @@ test('the viewer never re-serialises anything', () => {
   // cannot be named in the viewer's own prose, which is cheaper than arguing
   // about whether a particular occurrence was live code.
   //
+  // The name rather than one spelling of reaching it. This read the fourteen
+  // characters `JSON.stringify`, and a property is not only reachable through
+  // its dot: the bracket form is the same function, ships straight past a
+  // substring search, and so does a destructured or captured reference to it.
+  // Enumerating the ways to write a property access is the game the enumerator
+  // loses — a space before the dot, a computed key, an alias — so what is
+  // refused is the name itself, anywhere under `site/js/`. The cost is one more
+  // word the viewer's prose cannot use, which is the trade this check already
+  // made and is priced the same way. The name is not written out here either,
+  // for the same reason: this file is read by the scan below it.
+  //
   // It catches none of the ways an AAD could be altered without being rebuilt.
-  // Normalising it, trimming it, or re-encoding it are all single method calls
-  // that this scan has no opinion about; what refuses those is the
-  // `combining-marks` fixture, whose strings are changed by every one of them.
+  // Normalising it and trimming it are single method calls that this scan has no
+  // opinion about; what refuses those is the `combining-marks` fixture, whose
+  // authenticated data is changed by normalising and whose document is changed
+  // by normalising and by trimming.
+  //
+  // Re-encoding is not among them and cannot be, which is a residual rather than
+  // a gap in that fixture. Encoding a string to UTF-8 and decoding those bytes
+  // back is the identity on every string the viewer's tag check can be reached
+  // with — the strings for which it is not are the ones that are not well-formed
+  // UTF-16, and those are refused before the encoding — so no fixture is changed
+  // by a re-encoding and none can be. Trimming the authenticated data is a
+  // residual of the same kind, for the reason the fixture test below sets out:
+  // canonical JSON has no outer whitespace to trim.
+  const serialiser = ['string', 'ify'].join('');
   for (const name of readdirSync(SITE_JS)) {
     const source = readFileSync(join(SITE_JS, name), 'utf8');
-    assert.ok(!source.includes('JSON.stringify'), `${name} serialises JSON`);
+    assert.ok(!source.includes(serialiser), `${name} names the JSON serialiser`);
   }
 });
 
@@ -712,6 +1247,201 @@ test('the interop vectors cover the shapes they are meant to', () => {
     assert.equal(fixture.inputs.id.length, 22);
     assert.equal(fixture.inputs.a.length, 43);
   }
+
+  // And each of those is the one spelling of its bytes, which the lengths above
+  // do not say and the derivation witness below cannot.
+  //
+  // Everything that reads these values decodes them first, and the decoder is
+  // lenient: it takes either alphabet, ignores padding, and ignores the unused
+  // low bits of the last character. So a published input rewritten into a
+  // different string that decodes to the same bytes passes every derivation
+  // check there is. What that would move is not the cryptography but the
+  // confinement scan, which watches these as literal strings — it would go on
+  // watching for a spelling no longer published, and key material could then
+  // appear in a report with nothing looking for it.
+  //
+  // Re-encoding is the whole test: a value that is already canonical unpadded
+  // base64url survives the round trip unchanged, and every other spelling of the
+  // same bytes does not.
+  //
+  // The derivations as well as the fixtures. Those carry the same three inputs
+  // and are read the same way — decoded, derived from, compared as bytes — and
+  // the corpus does not decrypt with them, so a re-spelling there disturbs even
+  // less than one in a fixture does.
+  for (const record of [...vectors.fixtures, ...vectors.derivations]) {
+    for (const field of ['a', 'b', 'id']) {
+      const published = record.inputs[field];
+      assert.equal(
+        Buffer.from(published, 'base64url').toString('base64url'),
+        published,
+        `${record.name}: inputs.${field} is not the canonical spelling of its own bytes, so what the confinement scan watches for is not what is published`,
+      );
+    }
+  }
+});
+
+test('every published derived key is the one its published inputs derive', async () => {
+  // The `derived.kek` values had no witness. Nothing in the corpus compares
+  // against them — the viewer derives its own key and hands back a key object,
+  // never bytes — so a wrong one is not a wrong decryption. What they are used
+  // for is the confinement scan: each is watched as a value that must never
+  // appear in anything the viewer reports, and the floor on that scan counts
+  // distinct strings rather than correct ones. So changing one of them by a
+  // character left every count clear while the scan watched for a string no
+  // derivation produces, which is a scan one secret smaller than it says.
+  //
+  // That is a claim about every value the scan watches, and the derived key was
+  // only one of them. The content keys are watched the same way and were in the
+  // same position: `derivation.probe.k` is compared against by nothing at all —
+  // the corpus hands the viewer the wrapped form and asks whether it unwraps,
+  // never what it unwrapped to — and `fixture.inputs.k` is compared against only
+  // where a case reseals a document under it, which is a handful of cases and
+  // not a statement about the published value. Both are re-derivable from what
+  // is published beside them, so both are re-derived below rather than left as
+  // strings the scan watches and nothing checks.
+  //
+  // Re-derived here from the inputs published beside them, by a derivation
+  // written out in this file: not imported from the viewer, which is the thing
+  // these vectors exist to be independent of, and not read out of the vector
+  // file's own description of itself, which would agree with whatever it said.
+  const info = 'patientscribe/link_split_v1/kek';
+  const outputBytes = 32;
+
+  /**
+   * @param {string} a The link capability, unpadded base64url.
+   * @param {string} b The stored key, unpadded base64url.
+   * @param {string} id The share identifier, unpadded base64url.
+   * @returns {Promise<string>}
+   */
+  const kekFrom = async (a, b, id) => {
+    const ikm = Buffer.concat([Buffer.from(a, 'base64url'), Buffer.from(b, 'base64url')]);
+    const base = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: Buffer.from(id, 'base64url'),
+        info: new TextEncoder().encode(info),
+      },
+      base,
+      outputBytes * 8,
+    );
+    return Buffer.from(bits).toString('base64url');
+  };
+
+  /**
+   * The content key a wrapped one carries, read back under the key that wrapped
+   * it.
+   *
+   * The wire layout the vectors publish for themselves — nonce, then ciphertext
+   * and tag — and no additional authenticated data, which is what the scheme
+   * note says of this one encryption and is a claim of its own: written with an
+   * AAD, this refuses. Spelled out here rather than imported from the viewer,
+   * for the reason the derivation above is.
+   *
+   * @param {string} kek Unpadded base64url.
+   * @param {string} wrapped Unpadded base64url of nonce || ciphertext || tag.
+   * @returns {Promise<string>} The unwrapped key, unpadded base64url.
+   */
+  const unwrapped = async (kek, wrapped) => {
+    const key = await crypto.subtle.importKey('raw', Buffer.from(kek, 'base64url'), 'AES-GCM', false, ['decrypt']);
+    const bytes = Buffer.from(wrapped, 'base64url');
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12) }, key, bytes.subarray(12));
+    return Buffer.from(plain).toString('base64url');
+  };
+
+  for (const fixture of vectors.fixtures) {
+    assert.equal(
+      await kekFrom(fixture.inputs.a, fixture.inputs.b, fixture.inputs.id),
+      fixture.derived.kek,
+      fixture.name,
+    );
+
+    // And the content key, which the scan watches and which the derivation above
+    // says nothing about. Unwrapped from what is published beside it, so a
+    // published key changed by a character is a key the published wrapping does
+    // not hold rather than a string the scan is watching for no reason.
+    assert.equal(
+      await unwrapped(fixture.derived.kek, fixture.outputs.wrapped_k),
+      fixture.inputs.k,
+      `${fixture.name}: the published content key is not the one the published wrapping carries`,
+    );
+    // And the nonce it was wrapped under, which is published as its own value
+    // and is the first twelve bytes of that wrapping — one fact written in two
+    // places, and neither of them derived from the other here.
+    assert.equal(
+      Buffer.from(fixture.outputs.wrapped_k, 'base64url').subarray(0, 12).toString('base64url'),
+      fixture.inputs.wrap_nonce,
+      `${fixture.name}: the published wrapping nonce is not the one the wrapping begins with`,
+    );
+    assert.equal(
+      Buffer.from(fixture.outputs.ciphertext, 'base64url').subarray(0, 12).toString('base64url'),
+      fixture.inputs.content_nonce,
+      `${fixture.name}: the published content nonce is not the one the ciphertext begins with`,
+    );
+  }
+  for (const derivation of vectors.derivations) {
+    assert.equal(
+      await kekFrom(derivation.inputs.a, derivation.inputs.b, derivation.inputs.id),
+      derivation.derived.kek,
+      derivation.name,
+    );
+    // And the parameters each derivation record publishes as its own, which is
+    // what an implementer of the other side would build against. The derivation
+    // above names them itself rather than reading them from here, so this is two
+    // statements agreeing rather than one taken from the other.
+    assert.equal(derivation.inputs.info, info, derivation.name);
+    assert.equal(derivation.inputs.output_bytes, outputBytes, derivation.name);
+
+    // And the probe, which is watched by the confinement scan exactly as the
+    // derived key is and which nothing anywhere compares against: the corpus
+    // hands the viewer `probe.wrapped_k` and asks whether it unwraps, and never
+    // asks what it unwrapped to. So a probe key changed by a character was a
+    // secret the scan watched for that no wrapping here carries, with every
+    // count still clear — the same hole the derived key had, one field over.
+    assert.equal(
+      await unwrapped(derivation.derived.kek, derivation.probe.wrapped_k),
+      derivation.probe.k,
+      `${derivation.name}: the published probe key is not the one the published wrapping carries`,
+    );
+    assert.equal(
+      Buffer.from(derivation.probe.wrapped_k, 'base64url').subarray(0, 12).toString('base64url'),
+      derivation.probe.nonce,
+      `${derivation.name}: the published probe nonce is not the one its wrapping begins with`,
+    );
+  }
+
+  // And the note at the top of the file, which is the only place the derivation
+  // is written out in prose. A note that no longer describes the records under
+  // it is a conformance target saying one thing and publishing another.
+  assert.ok(vectors.scheme.kek.includes('HKDF-SHA-256'), 'the published scheme no longer names the derivation');
+  assert.ok(vectors.scheme.kek.includes(`"${info}"`), 'the published scheme no longer names the derivation context');
+  assert.ok(
+    vectors.scheme.wrapped_k.includes('AES-256-GCM'),
+    'the published scheme no longer names how a content key is wrapped',
+  );
+
+  // And both witnesses are shown to refuse, so a clean answer is an answer
+  // rather than a comparison nothing could fail.
+  const [first] = vectors.fixtures;
+  const salt = Buffer.from(first.inputs.id, 'base64url');
+  salt[0] = ((salt[0] ?? 0) ^ 1) & 0xff;
+  assert.notEqual(
+    await kekFrom(first.inputs.a, first.inputs.b, salt.toString('base64url')),
+    first.derived.kek,
+    'the witness derived the published key from a salt that is not the published one',
+  );
+
+  // The unwrap refuses by throwing rather than by answering something else,
+  // which is what a tag is for — so this is the assertion that the second
+  // witness is reading the wrapping and not reading past it. One bit of the
+  // key it is opened under.
+  const wrongKek = Buffer.from(first.derived.kek, 'base64url');
+  wrongKek[0] = ((wrongKek[0] ?? 0) ^ 1) & 0xff;
+  await assert.rejects(
+    () => unwrapped(wrongKek.toString('base64url'), first.outputs.wrapped_k),
+    'the witness opened a published wrapping under a key that is not the one it was wrapped with',
+  );
 });
 
 test('one fixture is changed by every repair that could change it', () => {

@@ -48,12 +48,21 @@
  * has already covered.
  *
  * "Exactly as it was received" rules out the small repairs as firmly as it rules
- * out the large one. Normalising the string, trimming it, or re-encoding it are
- * each a single method call and each produces a different string that means what
- * the original meant — which is the whole of what must not happen, whether it
- * happens on the way into the tag check or on the way back out to the caller.
- * The additional authenticated data handed back is the string that arrived: the
- * same value, not a copy of it that means the same thing.
+ * out the large one. Normalising the string or trimming it are each a single
+ * method call and each produces a different string that means what the original
+ * meant — which is the whole of what must not happen, whether it happens on the
+ * way into the tag check or on the way back out to the caller. The additional
+ * authenticated data handed back is the string that arrived: the same value, not
+ * a copy of it that means the same thing.
+ *
+ * Re-encoding is not on that list, and it was, which is worth correcting rather
+ * than deleting. Encoding a string to UTF-8 and decoding those bytes back is the
+ * identity on every string that reaches this module's tag check, because the
+ * only strings for which it is not are the ones that are not well-formed
+ * UTF-16 — and those are refused a few lines earlier, by the test the next
+ * paragraph is about. So a re-encoding of the authenticated data is a step
+ * nothing can tell from its absence, which makes it a residual rather than a
+ * repair to be caught: no fixture is changed by it and none can be.
  *
  * The plaintext is not that, and cannot be. It was never a string on this side —
  * it is bytes the tag covered, decoded here — so what a caller receives is the
@@ -168,15 +177,15 @@ export const CIPHERTEXT_MAX_B64_LENGTH = Math.ceil((350 * 1024) / 3) * 4;
  * The largest AAD worth looking at.
  *
  * The AAD is fixed by its schema at six scalar fields: two pinned literals, a
- * 22-character identifier, an integer, a boolean and one short string. This
- * bound assumes that stays true — none of those fields is long-form text. The
- * room it leaves above the longest form they can take is something over thirty
- * times, not the orders of magnitude it might read as: the fixtures sealed
- * against this schema run to a little over a hundred code units, and the fields
- * that could grow are an expiry of at most sixteen digits and one short string.
- * Thirty times is ample for a schema this shape and is the number, so it is the
- * number written down. Counted in UTF-16 code units, which bound the UTF-8 byte
- * count the tag covers within a factor of three.
+ * 22-character identifier, an integer, a boolean, and one string the validator
+ * constrains only to be non-empty. Five of the six have a length the schema
+ * fixes; the sixth does not, and this bound is what fixes it. That is why the
+ * number is a bound rather than a sum of field widths — the fixtures sealed
+ * against this schema run to a little over a hundred code units, but an AAD of
+ * exactly this length is one the validator admits and a producer may emit, which
+ * is a fact the corpus carries rather than an argument made here. Counted in
+ * UTF-16 code units, which bound the UTF-8 byte count the tag covers within a
+ * factor of three.
  *
  * The two comparisons against this bound are `>`, and unlike the ciphertext ones
  * that is a pinned comparison rather than a residual — the reason it was written
@@ -223,6 +232,17 @@ const ENCODER = new TextEncoder();
  * "do not treat these bytes as a mark", which is to say hand back every
  * character the bytes encode. What a caller receives is then the string those
  * bytes decode to, with nothing removed.
+ *
+ * What `fatal` refuses is ill-formed bytes, and not the character U+FFFD. A
+ * document may contain a replacement character like any other character — `ef bf
+ * bd` is well-formed UTF-8 and decodes to it — and such a document is decoded
+ * and handed on. The distinction is worth stating because the obvious wrong
+ * implementation is indistinguishable from this one on every refusal: a decoder
+ * that repaired ill-formed bytes and then refused whatever came back carrying a
+ * U+FFFD would refuse every document this one refuses, and would also refuse a
+ * valid share nobody had touched, collapsing it into the same unavailable state
+ * a tampered one gets. The corpus carries a share sealed over those three bytes
+ * that must decrypt, so the two are told apart.
  */
 const DECODER = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -493,6 +513,20 @@ export async function deriveKek(linkKey, serverKey, shareId) {
       ['unwrapKey'],
     );
   } catch {
+    // Nothing reaches this, and that is a residual written down rather than a
+    // claim that nothing could. What is enforced is this module's single failure
+    // shape: every refusal is a returned `null`, and a rejection escaping from
+    // here would be a second one — a caller could tell it from a wrong key, which
+    // is exactly the difference a recipient must not be able to observe.
+    //
+    // What no case can supply is an input that makes either call above reject.
+    // The three guards at the top of this function admit only byte arrays of
+    // fixed lengths, so the keying material `importKey` is handed is always
+    // sixty-four bytes and the salt `deriveKey` is handed is always sixteen, and
+    // Web Crypto accepts both. Any rejection either call has left is about the
+    // environment rather than about the arguments, and a corpus supplies
+    // arguments. So deleting these two lines passes every case there is: the
+    // sibling spelling is outside the instrument rather than caught by it.
     return null;
   } finally {
     // The one buffer in which both halves sit together, gone before the caller
@@ -500,6 +534,17 @@ export async function deriveKek(linkKey, serverKey, shareId) {
     // this function as a buffer somebody else decoded, and the link capability as
     // one the caller is still holding — which is why this is a claim about this
     // buffer rather than about the material.
+    //
+    // And nothing can show it, which is the other thing worth writing down. The
+    // buffer is a local, no reference to it leaves this function, and Web Crypto
+    // has already copied what it needed by the time this line runs — so deleting
+    // this line derives exactly the same key, refuses exactly the same inputs,
+    // and produces exactly the same outcome for every input there is. No corpus
+    // of inputs and results can tell the two apart, and no probe for key material
+    // in what this module returns can either, because what is at stake is a
+    // buffer this module never returns. Like the base key's usage list above,
+    // this is a claim about these bytes that only a reader can check, so it is
+    // stated here rather than left to look like something a case is holding.
     ikm.fill(0);
   }
 }

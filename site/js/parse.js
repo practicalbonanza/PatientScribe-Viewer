@@ -473,6 +473,29 @@ export function parseLinkFragment(fragment) {
   // `toJSON` is exactly a way to make serialisation call the thing it was not
   // supposed to be able to call. And the object is frozen so the capability
   // cannot be attached back onto it, by that route or any other.
+  //
+  // Of the three flags written below, one is load-bearing and two are a
+  // residual, and which is which is worth stating because the corpus reads all
+  // three back and it would be easy to read that as three pins. `enumerable` is
+  // the load-bearing one: freezing an object does not change it, so it is the
+  // flag that decides whether the operations above visit this property, and
+  // every one of those readings is a case. `writable` and `configurable` are
+  // not: the object is frozen at the `return` below, and freezing an object sets
+  // both of those to false on every own data property it has, whatever the
+  // descriptor that defined them said. So the two spellings produce the same
+  // descriptor, the same object, and the same answer for every input there is.
+  //
+  // The freeze that does that is `Object.freeze(params)` at the return, and not
+  // the `Object.freeze` a few lines down from here — that one is applied to the
+  // accessor function itself, and what it is for is the sentence above about
+  // hanging a `toJSON` off it. Two freezes, two jobs; only the object's makes
+  // these two flags redundant.
+  //
+  // What makes that a residual rather than a hole is that the freeze is pinned —
+  // the corpus reads `Object.isFrozen` of this object, so the line that makes
+  // these two flags redundant cannot go quietly. They are written out because
+  // the descriptor is the place a reader looks to learn what this property is,
+  // not because anything downstream depends on them.
   Object.defineProperty(params, 'takeLinkKey', {
     value: Object.freeze(() => {
       const held = linkKey;

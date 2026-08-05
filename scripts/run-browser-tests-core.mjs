@@ -174,6 +174,11 @@ export const REQUIRED_TESTS = Object.freeze({
   'smoke.spec.js': Object.freeze([
     'the page is served and its module graph runs without error',
     'the development server refuses anything outside the tree it serves',
+    // The one that ties together three things that are supposed to be the same:
+    // what the sink scan reads, what this suite runs against, and what a
+    // recipient receives. Nothing on the browser side reads a file, so before it
+    // the suite could not tell a served response from the file behind it.
+    'the bytes the server hands back are the bytes on disk',
     // The one that makes the engine list below mean something. Everything here
     // reads a project's name, and a name is not an engine: pointing the project
     // called `webkit` at Chromium is one word in the harness configuration, and

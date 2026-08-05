@@ -3,9 +3,48 @@ name: CI
 # Runs the same npm script a developer runs locally, so there is one definition
 # of the checks and no way for CI and the working copy to drift apart.
 #
+# Two steps below reach the same checks by two different routes, and the second
+# of them is here because of what the first one rests on. `npm run check` is a
+# chain of npm script names, and every one of those names is a string in
+# `package.json` — so an edit to that one file can replace each step in turn with
+# a command that does nothing, and the chain exits 0 having run none of them. The
+# manifest is read and compared against its pins by the two runners, and those
+# runners are reached only through the very step names being replaced, so
+# silencing all of them silences the reader as well.
+#
+# The step that invokes a runner by its path does not go through those names at
+# all. That runner reads the whole manifest and refuses the run when any step is
+# not the command it is pinned to be, so one such step names every substitution
+# rather than the one it happens to be about. One is therefore enough, and the
+# step list is deliberately not repeated here: a copy of it in this file would be
+# the second definition the paragraph above exists to prevent.
+#
+# What this does not do is change a local `npm run check`, which is still
+# silenceable from `package.json` alone, because locally that manifest is the
+# entry point as well as the subject. The asymmetry is the point: a green local
+# run is not on its own proof that the gate ran, and CI does not share that blind
+# spot.
+#
 # This workflow builds nothing and deploys nothing. It uses no secrets and needs
 # none: everything it touches is already public. Actions are pinned to full
 # commit SHAs — a tag can be moved, a SHA cannot.
+#
+# The last step reads the history rather than the working copy. A commit message
+# is fixed once it is written, so the only place to notice something in one is
+# afterwards, over every commit there is. The hook in `.githooks/` is what stops
+# such a message being written; this is what notices when the hook was not wired
+# up, was skipped, or was never there because the commit was made somewhere else.
+#
+# It is not the only place that happens, and it is worth saying so rather than
+# claiming `npm run check` cannot read the history: `check:self` runs the
+# attribution check's own self-test, and that spawns this same scan over this
+# repository and requires it to come back clean. So the history is already read
+# inside the script above. This step is kept because it is the one that reads it
+# as its own subject — a history that has grown an attribution fails here as
+# itself, rather than arriving as a self-test that stopped passing — and because
+# it is what the `fetch-depth: 0` below is for. Both readings are only worth as
+# much as that depth: on the default checkout each of them reads one commit and
+# reports on all of them.
 
 on:
   push:
@@ -21,6 +60,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Every commit, rather than the tip. The attribution step below reads
+          # the whole history, and on the default shallow checkout the whole
+          # history is one commit — it would exit 0 having looked at almost
+          # nothing, which is the quietest way for a check like this to stop
+          # meaning anything.
+          fetch-depth: 0
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -33,5 +78,11 @@ jobs:
       - name: Install test browsers
         run: npm run browsers
 
+      - name: Read the manifest by path rather than by name
+        run: node scripts/run-node-tests.mjs self
+
       - name: Run all checks
         run: npm run check
+
+      - name: Check the history for attribution
+        run: node scripts/check-attribution.mjs

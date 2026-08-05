@@ -129,9 +129,18 @@ const AAD_V1_FIELDS = ['v', 'id', 'doc', 'exp', 'edited', 'sfv'];
  * The validated additional authenticated data.
  *
  * This travels with the document because it is the sole display source for
- * expiry and edited state: it is covered by the content tag, so it cannot be
- * changed without the decryption failing, which is not true of anything in the
- * document body.
+ * expiry and edited state: whatever a viewer shows for those two is read from
+ * here, and from nowhere else.
+ *
+ * Sole source, and not better protected — those are two different claims and
+ * only the first is true. One tag covers the ciphertext the document arrives in
+ * and this authenticated data alike, so a change to either fails the decrypt and
+ * nothing is handed on at all. No field of a share is unprotected, and the
+ * reason to read expiry and edited state from one place is not that the other
+ * place is weaker. It is that two copies can disagree, and a viewer that had to
+ * pick between them would be deciding something rather than reading it. The
+ * document carries its own `edited`; `dispatch.js` is where the two are required
+ * to agree, and where disagreement is a refusal.
  *
  * @typedef {object} AadV1
  * @property {typeof LINK_SPLIT_V1} v

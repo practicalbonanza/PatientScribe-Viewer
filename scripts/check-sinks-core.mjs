@@ -281,6 +281,64 @@ export const RULES = [
     why: 'loads a module from a computed specifier',
   },
   {
+    id: 'network-egress',
+    files: ANY,
+    // Every other rule here is about what arrives — markup parsed, code run, a
+    // URL built. This one is about what leaves, which is a different question
+    // and was not being asked at all.
+    //
+    // The link capability is in the fragment, and the fragment never reaches a
+    // server on its own. One line sending it somewhere is all it takes for that
+    // to stop being true: a beacon fires during unload and returns nothing a
+    // caller has to read, so it leaves no result to notice and no error to
+    // handle. The viewer imports nothing, talks to nobody, and fetches only what
+    // its own module graph names — so a network call in a served file is not a
+    // feature written carelessly, it is a feature this viewer does not have.
+    //
+    // Five names, and a list of names is the most fragile shape a rule here has:
+    // any one can go with the other four still firing, which is why the
+    // self-test names each spelling separately rather than asking whether the
+    // rule fired.
+    //
+    // `fetch` is anchored to its call because the bare word is ordinary English
+    // and appears in this project's prose; the other four are spelled nowhere
+    // but here and are matched as names, so a captured reference is refused
+    // along with a call. That asymmetry is deliberate rather than an oversight.
+    //
+    // It is now the pattern as well as the sentence, which it had stopped being.
+    // `sendBeacon` was anchored to its call exactly like `fetch`, so this
+    // paragraph claimed four names matched as names while the pattern matched
+    // three, and `const send = navigator.sendBeacon;` went straight through. The
+    // sentence was the right design and the pattern was the drift: the word is
+    // not ordinary English, it is spelled nowhere under `site/`, and a captured
+    // beacon is the one whose call site is easiest to put where a line scan is
+    // not looking. So the anchor came off rather than the claim, and the
+    // self-test names a captured spelling beside the called one, which is what
+    // stops the two drifting apart again.
+    //
+    // The cost of matching a name rather than a call, said rather than left to
+    // be discovered: `const sendBeacon = false;` is refused, and so is a comment
+    // that mentions the word. Neither sends anything anywhere. That is the same
+    // trade every tripwire in this file makes — the rule is that the word does
+    // not appear under `site/`, not that a particular occurrence of it is live —
+    // and it is the reason `fetch` is anchored and this one is not: `fetch` is
+    // ordinary English and a viewer's prose will want it, while nothing here has
+    // any reason to write `sendBeacon` at all. A viewer that needed the word for
+    // something innocent would be a deliberate change to this rule rather than a
+    // line that quietly passed.
+    //
+    // What this cannot do is decide anything. It is a lexical tripwire like the
+    // rest of this file — it reads lines, not data flow, and every miss listed
+    // at the top of this module applies to it exactly as much. `navigator['sendBeacon']`
+    // is one of them, name match or no name match. The control that actually
+    // holds at runtime is CSP `connect-src`, restricted to the API origin, which
+    // arrives with the deploy configuration. This is the same requirement
+    // asserted at the earliest point it can be asserted, where it costs one line
+    // and catches the accident.
+    pattern: /\bfetch\s*\(|\bsendBeacon\b|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b/,
+    why: 'sends data off the page',
+  },
+  {
     id: 'typecheck-suppression',
     files: ANY,
     // Not a sink, and here anyway. The typecheck step is pinned whole — both

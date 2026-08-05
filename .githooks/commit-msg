@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# Refuse a commit message that credits the change to a tool.
+#
+# This repository's history is public from its first commit and cannot be taken
+# back: a rewritten history does not reach anyone who has already cloned it. So
+# a message says what changed and nothing about how it came to be written, and
+# that has to hold when the message is written rather than afterwards.
+#
+# Wire it up once, in a clone of this repository:
+#
+#   git config core.hooksPath .githooks
+#
+# That is local configuration and is not itself a commit, which is why the
+# workflow in .github/workflows/ci.yml reads the whole history for the same
+# thing: a hook nobody wired up, or a commit made somewhere else, is exactly
+# what this file cannot see.
+#
+# The rules are in scripts/check-attribution-core.mjs, applied by
+# scripts/check-attribution.mjs, so there is one definition of them rather than
+# one per place they are used.
+
+set -e
+
+exec node "$(dirname "$0")/../scripts/check-attribution.mjs" --message "$1"

@@ -1108,6 +1108,17 @@ export function buildCases() {
     ['a-record-that-lists-fewer-properties-than-it-has', { a: 1, b: 2 }, ['a', 'b'], null, {
       kind: 'own-keys-under-reports',
     }],
+    // And the value the reader's first line is for, reached through the reader
+    // rather than through the predicate beside it. Every other value here that
+    // is not a record is also carrying the wrong field set, so the count refuses
+    // it a step later and the shape question could be deleted with nothing to
+    // notice: a callable's own `length` and `name` are two names no list here
+    // asks for. This one lists exactly the names it is asked about, holds them
+    // as ordinary data properties, and answers every reflection the way the
+    // record beside it does — so what refuses it is that it is a function.
+    ['a-callable-carrying-exactly-the-named-fields', { a: 1, b: 2 }, ['a', 'b'], null, {
+      kind: 'callable-with-fields',
+    }],
   ];
   for (const [name, record, names, fields, tamper] of fieldReads) {
     cases.push({ name: `fields/${name}`, kind: 'fields', record, names, tamper, expect: { fields } });
@@ -1354,6 +1365,165 @@ export function buildCases() {
     },
     expect: { ok: true, plaintext: '', aad: named.inputs.aad },
   });
+
+  // What the decoder does with a plaintext that is not well-formed UTF-8, which
+  // is the other half of the claim the byte-order-mark case above makes about
+  // that one step. The decoder is constructed with two flags and the mark case
+  // holds one of them; this holds the other, which is the one that decides
+  // between refusing such a document and handing back a repaired copy of it with
+  // U+FFFD standing in for whatever the bytes were. A repair, at the last step
+  // before the caller, on a path whose discipline everywhere else is refusal —
+  // and unlike the mark it can happen anywhere in the document and as often as
+  // there are bad bytes.
+  //
+  // No published share can ask it and no case sealed from a string can either: a
+  // string encodes to well-formed UTF-8 whatever the string is, so the question
+  // only exists for a plaintext assembled as bytes. These seal the named
+  // fixture's own document, under its own content key and nonce and over its own
+  // authenticated data, with one ill-formed sequence in it — so the share
+  // authenticates and the only thing left to refuse it is the decode.
+  //
+  // Four shapes rather than one, because "not well-formed UTF-8" is not one
+  // mistake. A byte that begins no sequence at all, a sequence that stops before
+  // it is finished, a continuation byte with nothing leading it, and a
+  // well-formed-looking three-byte sequence for a code point UTF-8 may not
+  // encode are each refused by the same flag and each repaired differently
+  // without it.
+  const documentBytes = Array.from(Buffer.from(named.inputs.plaintext, 'utf8'));
+
+  // One key and one nonce, shared by the four below and by the three that must
+  // decrypt. The shared key is what makes either group mean anything. The shared
+  // nonce carries none of that weight and is here because these are one document
+  // sealed several ways, which is worth saying rather than leaving implied: a
+  // nonce travels inside the blob — it is the first bytes of it, which the viewer
+  // splits off and hands to the decryption — so a case sealed under a different
+  // one decrypts exactly as well, and nothing here would notice. Crediting the
+  // nonce with the binding would be crediting it with work the format does not
+  // give it.
+  //
+  // The key is the opposite, and the four are why. They are required to refuse,
+  // and a refusal says nothing about where it came from: sealed under a key the
+  // viewer will not arrive at, they refuse at the tag, still report exactly the
+  // refusal the case requires, and pass while the decode they exist to ask about
+  // is never reached. That was demonstrated — resealing the four under a wrong
+  // key left the whole fast suite green with `fatal: false` back in the decoder —
+  // and it was available precisely because each group named its key in its own
+  // expression. Two expressions can be edited one at a time.
+  //
+  // One binding cannot. A key that stops being the one the share is wrapped
+  // under takes the three controls down with it, because those are required to
+  // come back whole rather than to refuse, and a control that stops decrypting
+  // is a failure nothing can read as success. `test/node/core.test.mjs` holds
+  // the other end: that all seven seal under this binding, and that this binding
+  // is the fixture's own published content key.
+  const documentKey = bytesOf(named.inputs.k);
+  const documentNonce = bytesOf(named.inputs.content_nonce);
+
+  /** @type {[string, number[]][]} */
+  const illFormedSequences = [
+    ['a-byte-that-begins-no-sequence', [0xff]],
+    ['a-sequence-that-stops-early', [0xe2, 0x82]],
+    ['a-continuation-byte-with-no-lead', [0x80]],
+    ['a-surrogate-spelled-as-three-bytes', [0xed, 0xa0, 0x80]],
+  ];
+  for (const [what, sequence] of illFormedSequences) {
+    cases.push({
+      name: `decrypt/document-sealed-over-${what}`,
+      kind: 'decrypt',
+      a: bytesOf(named.inputs.a),
+      id: bytesOf(named.inputs.id),
+      response: responseFor(named),
+      reseal: {
+        k: documentKey,
+        nonce: documentNonce,
+        bytes: [...documentBytes, ...sequence],
+      },
+      expect: DECRYPT_REFUSED,
+    });
+  }
+
+  // And the three that must decrypt, which is what makes the four above about
+  // the decode rather than about a refusal that would have happened anyway.
+  //
+  // The refusal these cases require is the one every other negative decryption
+  // case requires: no plaintext, no authenticated data, and no reason given —
+  // by design, because a viewer that told a recipient which step refused would be
+  // telling them something. So on its own each case above says only that this
+  // share did not decrypt, and a tag that no longer verifies, a length
+  // comparison gone wrong, or a base64 reading that stopped working would
+  // satisfy all four of them exactly as well as the decode does.
+  //
+  // What separates those is a share built the same way, sealed the same way,
+  // over the same document, differing from an ill-formed one by a single byte —
+  // and required to come back whole. The first completes the sequence that stops
+  // early: `e2 82` is refused and `e2 82 ac` must not be. The second is the code
+  // point immediately below the surrogates, which is a three-byte sequence of the
+  // same shape as the surrogate spelled as three bytes and is a code point UTF-8
+  // may encode. Between them, a refusal arriving from anywhere but the decode
+  // takes one of these down with it, and a decoder made to refuse the shape
+  // rather than the code point takes the second.
+  //
+  // The third is about what the four refusals are refusals of, and it is there
+  // because they can be satisfied by the wrong thing. The four require a refusal
+  // and say nothing about how it was reached, so a decoder that repaired the
+  // ill-formed bytes to U+FFFD and then refused any document containing that
+  // character reports exactly the refusal all four require — and every other case
+  // in this corpus passes with it, because no other document here carries a
+  // U+FFFD. That decoder is not this one. The bytes `ef bf bd` are well-formed
+  // UTF-8 for a document containing the replacement character, which a document
+  // is allowed to contain like any other: the shipped decoder decodes it and
+  // hands it on, while the repair-then-refuse one collapses a valid share into
+  // the same unavailable state a hostile one gets.
+  //
+  // So this case says what the four are about: ill-formed bytes, not the
+  // character U+FFFD. Sealed under the same binding as the other six, so it
+  // stands or falls with them.
+  //
+  // Its character is written as an escape where the two above are written as
+  // themselves, and that is deliberate rather than inconsistent: this is the one
+  // character a mis-encoded file produces by accident, so a literal here would be
+  // indistinguishable from the damage it is meant to be a case about.
+  //
+  // The fourth is not about ill-formed bytes at all, and it is here because this
+  // group is the only one in the corpus that says what the decoder hands back
+  // rather than whether it handed anything back. Every other plaintext here is
+  // printable, so a decode that quietly dropped a character nobody can see
+  // satisfied all of them: deleting U+0080 from the decoded string returned a
+  // document two code points long where three were sealed, with the tag checked
+  // and every case in this corpus green. The bytes `c2 80` are well-formed UTF-8
+  // for U+0080, a C1 control — a code point a document may carry like any other,
+  // that no fixture carried, and that shows as nothing. So this is not
+  // decoration: it is the shape without which a silent rewrite of authenticated
+  // content, after the tag check, is invisible. What it pins is what that step is
+  // for — the string that comes out is the string that went in, code point for
+  // code point, including the ones a reader cannot see.
+  //
+  // Written as an escape rather than as itself, for the reason the replacement
+  // character below it is: a literal control byte in a source file is
+  // indistinguishable from damage to the file.
+  /** @type {[string, number[], string][]} */
+  const wellFormedSequences = [
+    ['the-sequence-that-stops-early-completed', [0xe2, 0x82, 0xac], '€'],
+    ['the-code-point-below-the-surrogates', [0xed, 0x9f, 0xbf], '퟿'],
+    ['the-replacement-character-itself', [0xef, 0xbf, 0xbd], '\uFFFD'],
+    ['a-control-character-that-shows-as-nothing', [0xc2, 0x80], '\u0080'],
+  ];
+  for (const [what, sequence, character] of wellFormedSequences) {
+    cases.push({
+      name: `decrypt/document-sealed-over-${what}`,
+      kind: 'decrypt',
+      a: bytesOf(named.inputs.a),
+      id: bytesOf(named.inputs.id),
+      response: responseFor(named),
+      reseal: {
+        // The same binding the four refuse under. See the note above it.
+        k: documentKey,
+        nonce: documentNonce,
+        bytes: [...documentBytes, ...sequence],
+      },
+      expect: { ok: true, plaintext: `${named.inputs.plaintext}${character}`, aad: named.inputs.aad },
+    });
+  }
 
   cases.push({
     name: 'decrypt/combining-marks-aad-normalised',
@@ -2113,6 +2283,34 @@ export function buildCases() {
     expect: aadAdmitted(smallestExpiry),
   });
 
+  // And above every expiry a fixture carries, which is a band rather than an
+  // edge and was empty. The published values run through 2026 and stop at
+  // 1783036800; the only admitted value anywhere above them is the largest exact
+  // integer there is, which is a date 285 million years out. So every ordinary
+  // expiry past next year was a value no case held, and the expiry is returned
+  // as it arrived — a rewrite that moved one by a day, gated on being inside
+  // that band, changed what a recipient is told about when the link stops
+  // working and left this whole corpus green.
+  //
+  // Two of them rather than one, because a rewrite gated on a range is gated on
+  // a range somebody picked: one a few years out, one at the turn of the next
+  // century.
+  const expiryAboveTheFixtures = aadWithExpiry('1900000000');
+  cases.push({
+    name: 'aad/expiry-above-every-fixture',
+    kind: 'aad',
+    text: expiryAboveTheFixtures,
+    expect: aadAdmitted(expiryAboveTheFixtures),
+  });
+
+  const expiryFarAboveTheFixtures = aadWithExpiry('4102444800');
+  cases.push({
+    name: 'aad/expiry-far-above-every-fixture',
+    kind: 'aad',
+    text: expiryFarAboveTheFixtures,
+    expect: aadAdmitted(expiryFarAboveTheFixtures),
+  });
+
   // And at the largest length the bound on this string admits, which is the
   // other half of what the comparison beside that bound claims. The reason
   // written there was that no producer of this schema emits a string that long;
@@ -2127,6 +2325,29 @@ export function buildCases() {
     kind: 'aad',
     text: aadAtTheBound,
     expect: aadAdmitted(aadAtTheBound),
+  });
+
+  // And the same question the document case below asks, for the one field of the
+  // authenticated data that is a free string.
+  //
+  // Two of the six fields cannot be rewritten at all: `v` and `doc` are written
+  // back from the pins. The other four are handed back as they arrived, each
+  // past a check of its own — `exp` past a safe-integer test, `edited` past a
+  // type test, `id` past a decode and a length comparison, and `sfv` past a test
+  // that it is a non-empty string. `sfv` is the one with no constraint on its
+  // contents at all, so trimming it, or truncating it, was a rewrite of what the
+  // tag covered that nothing here asked about. Every published fixture's `sfv`
+  // is short and carries no outer whitespace, which is exactly what made the two
+  // edits invisible. The other three are asked about further down, each by a
+  // case about the values the fixtures happen not to carry.
+  const aadPreservingSfv = aadText((aad) => {
+    aad['sfv'] = '  a structured field value, spaced, and longer than any width a rewrite would keep it to  ';
+  });
+  cases.push({
+    name: 'aad/every-shape-a-silent-rewrite-would-change',
+    kind: 'aad',
+    text: aadPreservingSfv,
+    expect: aadAdmitted(aadPreservingSfv),
   });
 
   /** @type {[string, string][]} */
@@ -2217,6 +2438,791 @@ export function buildCases() {
       expect: docAdmitted(fixture.inputs.plaintext),
     });
   }
+
+  // A document carrying the shapes a silent rewrite needs in order to be seen.
+  //
+  // Every document case above asks whether a document is admitted or refused.
+  // None of them asks what a recipient reads, because the published fixtures are
+  // all one small shape: at most two sections, at most two lines in one, headings
+  // shorter than any truncation anybody would write, and no field whose
+  // whitespace means anything. So the validator could rewrite what it returns and
+  // the whole corpus stayed green. Each of these was demonstrated against the
+  // full gate, at exit 0:
+  //
+  //   - dropping every section past the second, invisible because no successful
+  //     fixture has three;
+  //   - sorting the sections by heading, invisible because the one multi-section
+  //     fixture is already in sorted order — reversing them is caught, sorting
+  //     them is not, and the difference is which of the two a rewrite would be;
+  //   - keeping only the first two lines of a section, invisible because no
+  //     section carries three;
+  //   - truncating a heading, invisible because none is long;
+  //   - trimming `banner_text`, invisible because none carries whitespace that
+  //     means anything.
+  //
+  // That list was the shapes one person thought of, and the document was built to
+  // carry exactly those. Five more rewrites were then found, every one of them
+  // leaving the full gate at exit 0 and every one of them changing what a
+  // recipient reads:
+  //
+  //   - merging duplicate lines, invisible because no section repeats one;
+  //   - deleting blank lines, invisible because no section carries one;
+  //   - trimming `you_means`, `topic` and `heading`, invisible because the first
+  //     two were never given whitespace and the third was only ever given length.
+  //
+  // The pattern is exact and is the point: the previous round gave `banner_text`
+  // outer whitespace and gave a heading extra length, so a rewrite reaching a
+  // field that had been given neither, or a shape no document carried at all,
+  // stayed invisible. A corpus holds the shapes it was given.
+  //
+  // The general property is that a successful validation returns what it was
+  // given — every field, unchanged, whatever it was. No list of cases holds that,
+  // and this one does not: a rewrite reaching some shape none of these cases
+  // carries is outside it, and the honest alternative is a generator of documents
+  // rather than a corpus about a validator. That residual is named rather than
+  // closed.
+  //
+  // What now stands for it, exactly:
+  //
+  //   - every string field a recipient reads — `banner_text`, `you_means`,
+  //     `visit_date`, `topic`, and every `heading` — carries both outer
+  //     whitespace and a length past the widths a rewrite would plausibly keep,
+  //     so trimming one, truncating one, or wrapping one is a different document;
+  //   - one section's lines carry a repeat, an empty string, and a line with both
+  //     whitespace and length, so merging duplicates, dropping blanks, trimming
+  //     and truncating are each a different document;
+  //   - there are three sections, in no sorted order, and one of them has more
+  //     than two lines, so sorting, dropping a section, and keeping only the
+  //     first lines are each a different document.
+  //
+  // The expectation is rebuilt from this same text by `expectedDoc`, field by
+  // field, so what is compared is the input read back rather than anything the
+  // viewer produced.
+  const preservingDocument = docText((doc) => {
+    doc['banner_text'] = '  Example banner text, spaced, and long enough that shortening it to a line would drop some.  ';
+    doc['you_means'] = '  Example recipient, spaced, and longer than any name a rewrite would keep whole.  ';
+    doc['visit_date'] = '  15 January 2026, spelled at a length no reformatting would leave alone.  ';
+    doc['topic'] = '  Example topic, spaced, and long enough that dropping its tail would change what it says.  ';
+    doc['sections'] = [
+      {
+        heading: '  Zebra: a heading longer than any truncation a rewrite would pick, and then some more of it  ',
+        lines: [
+          '  Example line one, spaced, and long enough that wrapping it would change where it breaks.  ',
+          'Example line two.',
+          'Example line two.',
+          '',
+          'Example line three.',
+        ],
+      },
+      {
+        heading: '  Middle heading, spaced, and carried at a length nothing would leave as it is.  ',
+        lines: ['Example line four.'],
+      },
+      {
+        heading: '  Alpha heading, spaced, and long for the same reason the two above it are.  ',
+        lines: [],
+      },
+    ];
+  });
+  cases.push({
+    name: 'document/every-shape-a-silent-rewrite-would-change',
+    kind: 'document',
+    text: preservingDocument,
+    expect: docAdmitted(preservingDocument),
+  });
+
+  // ---- Validator-output fidelity ---------------------------------------
+  //
+  // The property, stated once: a successful validation returns what it was
+  // given. At every location the validator returns a string, the string that
+  // comes back is the string that went in — nothing normalises, trims,
+  // truncates, collapses, reorders, deduplicates or drops.
+  //
+  // Validator output, and deliberately not "what a carer reads". The renderer in
+  // `site/js/render.js` clears the root and draws nothing, and the `render`
+  // cases observe the clear and the write counters rather than any text, so
+  // nothing in this corpus is in a position to say what a recipient sees. What
+  // these cases pin is the value `validateShareDocV1` and `validateAadV1` hand
+  // back; whatever displays it is downstream of that and is asked about
+  // elsewhere. Writing the stronger claim here would be a sentence in the code
+  // that is not true of the code, which is its own defect.
+  //
+  // Eight locations carry a string back: `banner_text`, `you_means`,
+  // `visit_date`, `topic`, every `heading`, every entry of every `lines`, and —
+  // in the authenticated data — `sfv` and `id`. Six of the eight come back
+  // unexamined past `typeof`. The other two are examined past it and returned as
+  // they arrived all the same: `sfv` has its length compared against zero, and
+  // `id` is decoded and its length compared, and in both cases what comes back
+  // afterwards is the string that went in. So a rewrite inside what those checks
+  // admit — a non-empty `sfv`, a substitution inside the identifier's
+  // alphabet — is a returned value like the rest of them.
+  //
+  // Two more fields are returned rather than refused without being strings at
+  // all: `exp`, a number checked for being a safe positive integer and handed
+  // back, and `edited`, a boolean checked for being one. Only four fields
+  // anywhere — `v`, `doc`, `schema` and `banner_key` — are written back from a
+  // pin, and those four are the only ones no rewrite can reach.
+  //
+  // For the other ten the coverage is the values this corpus carries, and the
+  // shape of that coverage differs by field. The matrix below is shapes, at
+  // every location that admits an arbitrary string. The remaining three axes are
+  // values rather than shapes and have a case apiece beside them: an expiry
+  // above the band every fixture sits in, an identifier carrying a character no
+  // fixture does, and this whole matrix run again with `edited` true.
+  //
+  // The lone refusal anywhere in this matrix is the empty string at `sfv`, which
+  // `aad/sfv-empty` already holds.
+  //
+  // The case above closed the shapes one person listed. This closes the class
+  // those shapes were examples of, and the difference is per-location coverage
+  // rather than a longer list: an earlier attempt was defeated by
+  // `heading.normalize('NFC')` alone, because a composable character sat in some
+  // fields and in no heading. So every shape below is at every one of the seven
+  // locations, rather than somewhere in the document.
+  //
+  // What a list of cases still cannot do is hold the property, and the reason is
+  // structural rather than a matter of length. The property quantifies over
+  // every value a share can carry; a corpus quantifies over the values it does
+  // carry. Those are different quantifiers, and no list closes the gap between
+  // them: a predicate chosen after reading a finite corpus can always be made
+  // true only outside it, so for any corpus there is a transform gated on
+  // something none of its cases happens to be — an interval, a container count,
+  // a character, a flag. Adding the case that catches today's transform is worth
+  // doing, and it is not progress towards closing the class.
+  //
+  // So the class is closed by that argument and by the reviewable diff, not by
+  // enumeration. A rewrite of what a validator returns is a change to a public
+  // file in a public repository, and that is what it comes up against. The
+  // alternative that would close it by construction is a generator — documents
+  // drawn from the schema and compared against themselves, rather than a corpus
+  // about a validator — and it is named here as deliberately not taken rather
+  // than overlooked: it moves the question to whether the generator's
+  // distribution reaches the shape, which is this question with a longer answer.
+  //
+  // The instances left open by design, so nobody has to rediscover which ones
+  // they are: a transform gated on a container count or a window the corpus
+  // skips; an expiry interval outside the band the cases cover; an identifier
+  // substitution outside the alphabet they carry; and a predicate on any axis
+  // every fixture holds constant. Each is a value this corpus does not carry,
+  // and each stays reachable for exactly as long as that is true of it. No
+  // longer list changes any of this; what a longer list does is move a named
+  // instance from open to closed, one value at a time.
+  //
+  // What stands for it now, exactly. At every one of the seven locations that
+  // admit an arbitrary string — the eighth, `id`, is fixed at twenty-two
+  // characters of one alphabet and has a case of its own — outer whitespace at
+  // both ends, an interior run of spaces, all three spellings of a line break,
+  // seventeen invisible and format characters, an acute accent both precomposed
+  // and decomposed, a variation selector, a character outside the basic plane, a
+  // C1 control, a U+FFFD that is there because it was sealed there, mixed case,
+  // and the three substitution baits — a typographic quote, an en dash and a
+  // non-breaking space.
+  //
+  // Length is the one item that is not per-location, and writing it as though it
+  // were would be exactly the overclaim this paragraph exists to avoid. Each of
+  // these strings runs to between 482 and 500 characters: past any width
+  // somebody would truncate a heading or a date to, and nowhere near past every
+  // width there is. What stands against a cut at an arbitrary width is the
+  // document at the largest size a share can be, below, whose padded line
+  // carries 345,490 characters — a truncation that leaves 500 alone still shows
+  // there. So the claim is per-location shape coverage everywhere, and length
+  // past any cut at the one location carrying the document's bulk.
+  //
+  // In the containers: a section list in an order that is neither sorted nor its
+  // own reverse, a section that repeats a line, a leading empty line, an interior
+  // one and a trailing one, the empty string at a heading and at a line, a
+  // document at the largest size a share can be, and two documents at the most
+  // sections and the most lines one can hold.
+  //
+  // Two things about the machinery, because each is one edit from turning this
+  // from an assertion into an agreement. `expectedDoc` is the identity
+  // assertion: it is `JSON.parse` of the very text the driver is handed, so what
+  // every admitted-document case compares against is its own input read back
+  // rather than anything a person wrote down — and because it is shared by all
+  // of them, anyone who answers a red identity failure by editing it destroys
+  // the property for the whole corpus in a single edit. And `docAdmitted` takes
+  // an optional second argument, which is the seam where identity could become
+  // an editable expectation: whatever is handed there is what the case compares
+  // against, in place of the input read back. Two cases below pass it, and what
+  // they pass is `expectedDoc` of the very text the driver is handed — the
+  // identity oracle written out rather than left to the default, which is the
+  // same comparison either way. Nothing in this corpus passes a hand-written
+  // document there, and a new fixture must not be the first.
+
+  // The shapes, one named constant apiece, every one written as an escape and
+  // none of them pasted. An invisible character that arrives in a fixture by
+  // accident is indistinguishable from one that was intended: two stray U+0001
+  // characters once passed typecheck, the sink scan, the corpus, both engines
+  // and the attribution scan without a word. This fixture is made of invisible
+  // characters, so the alphabet assertion below is what holds its contents,
+  // rather than care.
+  const SHAPES = Object.freeze({
+    softHyphen: '\u00AD',
+    zeroWidthSpace: '\u200B',
+    zeroWidthNonJoiner: '\u200C',
+    zeroWidthJoiner: '\u200D',
+    leftToRightMark: '\u200E',
+    rightToLeftMark: '\u200F',
+    leftToRightEmbedding: '\u202A',
+    rightToLeftEmbedding: '\u202B',
+    popDirectionalFormatting: '\u202C',
+    leftToRightOverride: '\u202D',
+    rightToLeftOverride: '\u202E',
+    wordJoiner: '\u2060',
+    functionApplication: '\u2061',
+    invisibleTimes: '\u2062',
+    invisibleSeparator: '\u2063',
+    invisiblePlus: '\u2064',
+    byteOrderMark: '\uFEFF',
+    // Composed and decomposed both, and at every location, because a
+    // normalisation is a rewrite in one direction only: NFC is invisible to a
+    // fixture carrying no decomposed sequence, and NFD to one carrying no
+    // precomposed character.
+    composedAcute: '\u00E9',
+    baseLetter: 'e',
+    combiningAcute: '\u0301',
+    variationSelector: '\uFE0F',
+    // Outside the basic plane, so it is a surrogate pair in the string as well
+    // as one character in the text. Unpaired surrogates are admitted by the
+    // validator too, and are deliberately not here: a lone surrogate cannot
+    // survive the transport that carries an observation back out of the page,
+    // which is why the two cases that ask about one build it inside the page
+    // from code units instead.
+    nonBasicPlane: '\u{1D11E}',
+    // A control that is legal in a JSON string once it is past U+001F, and one
+    // that a "strip control characters" pass would take.
+    c1Control: '\u0080',
+    // A replacement character that is in the document because it was in the
+    // document, not because something was repaired on the way.
+    replacementCharacter: '\uFFFD',
+    // The substitution bait. A pass that maps a typographic quote, an en dash
+    // or a non-breaking space to its ASCII lookalike is a rewrite of what was
+    // sealed, and nothing in this corpus saw one until now.
+    rightSingleQuotationMark: '\u2019',
+    enDash: '\u2013',
+    nonBreakingSpace: '\u00A0',
+    // A line break inside a value, in all three spellings, so a fixture that
+    // splits on one is a different document. It has to sit inside a `lines`
+    // entry to reach `validateLines`, and it does.
+    lineFeed: '\n',
+    carriageReturn: '\r',
+  });
+
+  /** Outer whitespace, at both ends of every location's string. */
+  const OUTER_SPACE = '  ';
+
+  /** An interior run, which a collapse leaves alone at the ends and not here. */
+  const INTERIOR_RUN = '   ';
+
+  /** Length, past any width a truncation would plausibly keep. */
+  const FIDELITY_PADDING = 'carried on at a length no truncation would leave alone, and then further still, ';
+
+  /**
+   * One location's string: every shape class in one value, behind a marker
+   * naming the location it belongs to.
+   *
+   * The marker is not decoration. A single failing case here prints the whole
+   * document twice, and at this size that is an unreadable single-line diff — so
+   * each location says which one it is, and the first difference in the dump
+   * names the field that moved.
+   *
+   * @param {string} marker
+   * @returns {string}
+   */
+  const fidelityString = (marker) =>
+    `${OUTER_SPACE}${marker}|MiXeD${INTERIOR_RUN}CaSe|` +
+    `${SHAPES.composedAcute}|${SHAPES.baseLetter}${SHAPES.combiningAcute}|${SHAPES.variationSelector}|` +
+    `${SHAPES.softHyphen}${SHAPES.zeroWidthSpace}${SHAPES.zeroWidthNonJoiner}${SHAPES.zeroWidthJoiner}` +
+    `${SHAPES.leftToRightMark}${SHAPES.rightToLeftMark}${SHAPES.leftToRightEmbedding}` +
+    `${SHAPES.rightToLeftEmbedding}${SHAPES.popDirectionalFormatting}${SHAPES.leftToRightOverride}` +
+    `${SHAPES.rightToLeftOverride}${SHAPES.wordJoiner}${SHAPES.functionApplication}` +
+    `${SHAPES.invisibleTimes}${SHAPES.invisibleSeparator}${SHAPES.invisiblePlus}${SHAPES.byteOrderMark}|` +
+    `${SHAPES.nonBasicPlane}|${SHAPES.c1Control}|${SHAPES.replacementCharacter}|` +
+    `it${SHAPES.rightSingleQuotationMark}s${SHAPES.enDash}spaced${SHAPES.nonBreakingSpace}thus|` +
+    `${SHAPES.lineFeed}${SHAPES.carriageReturn}${SHAPES.carriageReturn}${SHAPES.lineFeed}|` +
+    FIDELITY_PADDING.repeat(5) +
+    `${marker}-end${OUTER_SPACE}`;
+
+  /** Every character the fixture is allowed to carry beyond ASCII printables. */
+  const SHAPE_ALPHABET = new Set(Object.values(SHAPES).flatMap((shape) => [...shape]));
+
+  /**
+   * Hold one location's string to the matrix, at build time.
+   *
+   * Both directions, and the second is the one that is easy to leave out. Every
+   * shape `SHAPES` declares has to be present, and no character outside the
+   * alphabet `SHAPES` declares is allowed to be — so a location that quietly
+   * lost a shape is a build failure, and an invisible character that arrived by
+   * accident is one too. Neither could come from the identity comparison, which
+   * derives its expectation from this same text and would agree with a mistake
+   * as readily as with the intent.
+   *
+   * What this does not do is make the matrix complete, and it would be an easy
+   * sentence to write. Both directions are read off `SHAPES`: the alphabet is
+   * built from its values and the loop walks its entries. So what is held is the
+   * fixture against the table, both ways round, and never the table against the
+   * code points there are — a shape nobody wrote down is absent from the table
+   * and from every location at once, and this agrees with itself about it. That
+   * the seventeen invisibles are the invisibles worth naming, and that each
+   * escape is the character its name says it is, are held by reading them.
+   *
+   * @param {string} where
+   * @param {unknown} text
+   */
+  const holdFidelityString = (where, text) => {
+    if (typeof text !== 'string') {
+      throw new Error(`the fidelity fixture has no string at ${where}`);
+    }
+    for (const [name, shape] of Object.entries(SHAPES)) {
+      if (!text.includes(shape)) {
+        throw new Error(`the fidelity fixture is missing ${name} at ${where}`);
+      }
+    }
+    if (!text.includes(`${SHAPES.carriageReturn}${SHAPES.lineFeed}`)) {
+      throw new Error(`the fidelity fixture carries no CRLF at ${where}`);
+    }
+    if (!text.startsWith(OUTER_SPACE) || !text.endsWith(OUTER_SPACE)) {
+      throw new Error(`the fidelity fixture has no outer whitespace at ${where}`);
+    }
+    if (!text.includes(INTERIOR_RUN)) {
+      throw new Error(`the fidelity fixture has no interior whitespace run at ${where}`);
+    }
+    if (text.length <= 300) {
+      throw new Error(`the fidelity fixture is short enough to survive a truncation at ${where}`);
+    }
+    for (const character of text) {
+      const code = character.codePointAt(0) ?? 0;
+      if (SHAPE_ALPHABET.has(character) || (code >= 0x20 && code <= 0x7e)) {
+        continue;
+      }
+      const point = code.toString(16).toUpperCase().padStart(4, '0');
+      throw new Error(`the fidelity fixture carries U+${point} at ${where}, which is not one of its shapes`);
+    }
+  };
+
+  // The document. Seven sections rather than the three above, and one section of
+  // eight lines rather than five, because two of the transforms that survived
+  // everything else were gated on a container count the corpus happened to top
+  // out at: reversing the sections when there are more than three, and dropping
+  // a section's last line when there are more than five. The order the sections
+  // are written in is neither sorted nor reverse-sorted, so both a sort and a
+  // reversal are a different document.
+  //
+  // The empty string is legal at a heading and at a line and is carried at both.
+  // It is legal at the four scalar fields as well and is not carried there,
+  // because a field holding the empty string cannot also hold the shapes, and
+  // those four have exactly one value each.
+  const fidelitySections = [
+    {
+      heading: fidelityString('HEAD-Z'),
+      lines: [
+        fidelityString('LINE-1'),
+        fidelityString('LINE-DUP'),
+        fidelityString('LINE-DUP'),
+        '',
+        fidelityString('LINE-2'),
+        fidelityString('LINE-3'),
+        fidelityString('LINE-4'),
+        fidelityString('LINE-5'),
+      ],
+    },
+    { heading: fidelityString('HEAD-M'), lines: ['', fidelityString('LINE-6')] },
+    { heading: fidelityString('HEAD-A'), lines: [fidelityString('LINE-7'), ''] },
+    { heading: '', lines: [''] },
+    { heading: fidelityString('HEAD-B'), lines: [] },
+    { heading: fidelityString('HEAD-Y'), lines: [fidelityString('LINE-8'), fidelityString('LINE-8')] },
+    { heading: fidelityString('HEAD-C'), lines: [fidelityString('LINE-9')] },
+  ];
+
+  const fidelityDocument = docText((doc) => {
+    doc['banner_text'] = fidelityString('BANNER');
+    doc['you_means'] = fidelityString('YOU-MEANS');
+    doc['visit_date'] = fidelityString('VISIT-DATE');
+    doc['topic'] = fidelityString('TOPIC');
+    doc['sections'] = fidelitySections;
+  });
+
+  /**
+   * Hold the built document to the matrix, reading the text back rather than the
+   * object it was built from.
+   *
+   * Read back, because the text is what the driver is handed and the object is
+   * not: a shape lost in serialisation would be a shape this fixture claims and
+   * does not carry, and reading the object could not tell.
+   *
+   * @param {string} text
+   */
+  const holdFidelityDocument = (text) => {
+    const doc = JSON.parse(text);
+    holdFidelityString('banner_text', doc.banner_text);
+    holdFidelityString('you_means', doc.you_means);
+    holdFidelityString('visit_date', doc.visit_date);
+    holdFidelityString('topic', doc.topic);
+
+    /** @type {string[]} */
+    const headings = [];
+    let emptyHeadings = 0;
+    let emptyLines = 0;
+    let leadingEmpty = 0;
+    let interiorEmpty = 0;
+    let trailingEmpty = 0;
+    let duplicated = 0;
+    let longestSection = 0;
+
+    for (const [index, section] of doc.sections.entries()) {
+      headings.push(section.heading);
+      if (section.heading === '') {
+        emptyHeadings += 1;
+      } else {
+        holdFidelityString(`the heading of section ${index}`, section.heading);
+      }
+      /** @type {string[]} */
+      const lines = section.lines;
+      longestSection = Math.max(longestSection, lines.length);
+      if (lines.length > 1 && lines[0] === '') {
+        leadingEmpty += 1;
+      }
+      if (lines.length > 1 && lines[lines.length - 1] === '') {
+        trailingEmpty += 1;
+      }
+      if (lines.slice(1, -1).some((line) => line === '')) {
+        interiorEmpty += 1;
+      }
+      if (new Set(lines).size !== lines.length) {
+        duplicated += 1;
+      }
+      for (const [position, line] of lines.entries()) {
+        if (line === '') {
+          emptyLines += 1;
+        } else {
+          holdFidelityString(`line ${position} of section ${index}`, line);
+        }
+      }
+    }
+
+    /**
+     * Two lists of headings in the same order, compared element by element.
+     *
+     * Element-wise rather than by joining on a separator, because a separator
+     * is a character and every character in this fixture is one somebody chose
+     * on purpose. A join needs one that no heading carries, which is a second
+     * thing to be right about for no gain.
+     *
+     * @param {readonly string[]} left
+     * @param {readonly string[]} right
+     * @returns {boolean}
+     */
+    const sameOrder = (left, right) =>
+      left.length === right.length && left.every((item, index) => item === right[index]);
+
+    /** @type {[boolean, string][]} */
+    const containers = [
+      [doc.sections.length > 3, 'more than three sections, so reversing them is a different document'],
+      [longestSection > 5, 'a section of more than five lines, so dropping its last one shows'],
+      [
+        !sameOrder(headings, [...headings].sort()),
+        'sections in an order that is not sorted, so sorting them shows',
+      ],
+      [
+        !sameOrder(headings, [...headings].reverse()),
+        'sections in an order that is not its own reverse, so reversing them shows',
+      ],
+      [emptyHeadings > 0, 'the empty string at a heading'],
+      [emptyLines > 0, 'the empty string at a line'],
+      [leadingEmpty > 0, 'a section whose first line is empty'],
+      [interiorEmpty > 0, 'a section with an empty line in the middle'],
+      [trailingEmpty > 0, 'a section whose last line is empty'],
+      [duplicated > 0, 'a section that repeats a line, so merging duplicates shows'],
+    ];
+    for (const [held, what] of containers) {
+      if (!held) {
+        throw new Error(`the fidelity fixture does not carry ${what}`);
+      }
+    }
+  };
+
+  holdFidelityDocument(fidelityDocument);
+
+  cases.push({
+    name: 'document/every-shape-at-every-location-the-validator-returns',
+    kind: 'document',
+    text: fidelityDocument,
+    expect: docAdmitted(fidelityDocument),
+  });
+
+  // And the same matrix at the seventh location, which is in the other
+  // validator. `sfv` is the authenticated field with no constraint on its
+  // contents — a non-empty string, handed straight back. Trimming it and
+  // truncating it were already caught by the case above this one; normalising it
+  // and stripping the zero-width characters out of it both survived, which is
+  // what this closes. The other authenticated field that comes back as the
+  // string that arrived is `id`, and it cannot carry this matrix: it is
+  // twenty-two characters of one alphabet, so what is asked about it is asked
+  // below.
+  const fidelityAad = aadText((aad) => {
+    aad['sfv'] = fidelityString('SFV');
+  });
+  holdFidelityString('sfv', JSON.parse(fidelityAad).sfv);
+
+  cases.push({
+    name: 'aad/every-shape-at-the-one-location-the-validator-returns',
+    kind: 'aad',
+    text: fidelityAad,
+    expect: aadAdmitted(fidelityAad),
+  });
+
+  // And the identifier, which is the other authenticated field handed back as
+  // the string that arrived. Most of what could be done to it is refused: it has
+  // to be twenty-two characters, it has to decode to sixteen bytes, and the
+  // decoder is strict about the trailing bits. What survives all three is a
+  // substitution inside the alphabet — one character of it swapped for another,
+  // twenty-two characters still, sixteen bytes still, and a different share
+  // named.
+  //
+  // The alphabet has sixty-four characters, and the identifiers the fixtures
+  // carry in their authenticated data reach most of them — but not one of those
+  // carries `_`. So a pass rewriting `_` to `-` was invisible here while a pass
+  // rewriting `-` to `_` was caught, which is a coverage accident rather than a
+  // difference between the two. This carries the character that was missing.
+  // Elsewhere in the vectors an identifier of nothing but `_` does appear, as a
+  // derivation's salt; it never reaches this validator, so it stands for nothing
+  // about what is returned. What admits it is the validator's
+  // own decoder and not any leniency: twenty-two characters, a decode of exactly
+  // sixteen bytes, and a final `A` so the leftover bits are the zeroes the
+  // encoding requires of them.
+  const aadCarryingAnUnderscore = aadText((aad) => {
+    aad['id'] = 'AAAAAAAAAA_AAAAAAAAAAA';
+  });
+  cases.push({
+    name: 'aad/identifier-carrying-an-underscore',
+    kind: 'aad',
+    text: aadCarryingAnUnderscore,
+    expect: aadAdmitted(aadCarryingAnUnderscore),
+  });
+
+  // And both matrices again with `edited` true, which is the one axis every
+  // fixture carrying a matrix holds constant.
+  //
+  // The two interop fixtures whose `edited` is true are small — no outer
+  // whitespace, nothing long, one section apiece — and they were the only
+  // documents carrying that flag whose returned value anything here compared.
+  // One other case sends a document with `edited` true through the validator,
+  // and the resolution step refuses it on the mismatch with the authenticated
+  // copy, so what came back was never looked at. So a rewrite conditioned on the
+  // flag had nothing to show: trimming `banner_text` when the document says it
+  // was edited left the full gate at exit 0, and so did the same trim written at
+  // the resolution step and conditioned on the authenticated copy instead. A
+  // matrix at every location closes a transform that applies to every document.
+  // It does not close one that waits for a value the matrix never takes.
+  //
+  // Respelled by spread rather than rebuilt, so the member order is the order
+  // the two texts above already have and the only difference anywhere in the
+  // pair is that one boolean. Run through the resolution step because that is
+  // the one place both are read together, so a single case stands behind both
+  // spellings of the transform — the one inside the document validator and the
+  // one conditioned on the authenticated copy.
+  const editedFidelityDocument = JSON.stringify({ ...JSON.parse(fidelityDocument), edited: true });
+  const editedFidelityAad = JSON.stringify({ ...JSON.parse(fidelityAad), edited: true });
+  holdFidelityDocument(editedFidelityDocument);
+  holdFidelityString('sfv', JSON.parse(editedFidelityAad).sfv);
+
+  cases.push({
+    name: 'resolve/every-shape-at-every-location-with-edited-true',
+    kind: 'resolve',
+    aadText: editedFidelityAad,
+    docText: editedFidelityDocument,
+    expect: {
+      ok: true,
+      resultKeys: ['aad', 'doc', 'ok'],
+      frozen: false,
+      isTheRefusal: false,
+      aad: expectedAad(editedFidelityAad),
+      doc: expectedDoc(editedFidelityDocument),
+    },
+  });
+
+  // The largest valid share there is, which is the only thing that closes a
+  // transform gated on a length above whatever the longest string in a fixture
+  // happens to be. A stored item is bounded at 350 KB; the blob inside it is a
+  // 12-byte nonce, the ciphertext, and a 16-byte tag, and AES-GCM's ciphertext
+  // is the length of its plaintext — so this is the largest plaintext any share
+  // can carry, exactly.
+  //
+  // Exactly, and not one byte more. The bound on the encoded ciphertext admits
+  // one more byte than can be stored, so a fixture built at 358,373 would be a
+  // conformance vector for a share that cannot exist; one such fixture has
+  // already been removed from this repository on that ground and this is not a
+  // second.
+  const MAX_STORED_ITEM_BYTES = 350 * 1024;
+  const NONCE_BYTES = 12;
+  const TAG_BYTES = 16;
+  const MAX_PLAINTEXT_BYTES = MAX_STORED_ITEM_BYTES - NONCE_BYTES - TAG_BYTES;
+
+  /**
+   * The fidelity document, padded with ASCII to an exact size in bytes.
+   *
+   * Padded at one line rather than spread about, so the shapes above are carried
+   * unchanged and the size is one number in one place. ASCII because a byte of
+   * padding has to be a byte: every character added is one byte of UTF-8 and one
+   * byte of JSON text, with no escape to account for.
+   *
+   * @param {number} targetBytes
+   * @returns {string}
+   */
+  const documentOfExactly = (targetBytes) => {
+    const doc = JSON.parse(fidelityDocument);
+    // The padding is a section of the same kind as every other, rather than a
+    // plain one bolted on the end. Every heading and every line in this document
+    // is held to the matrix, and a padding section written as bare ASCII is two
+    // more locations carrying none of the shapes — which the hold below caught
+    // on the first attempt at this. The run of `x` sits inside the string,
+    // before its trailing whitespace, so the padding adds length and nothing
+    // else.
+    const padded = (/** @type {number} */ count) =>
+      `${fidelityString('PADDING')}${'x'.repeat(count)}${OUTER_SPACE}`;
+    /** @type {{ heading: string, lines: string[] }} */
+    const padding = { heading: fidelityString('HEAD-PADDING'), lines: [padded(0)] };
+    doc.sections.push(padding);
+    const sizeOf = () => new TextEncoder().encode(JSON.stringify(doc)).length;
+    const deficit = targetBytes - sizeOf();
+    if (deficit < 0) {
+      throw new Error(`the fidelity document is already ${-deficit} byte(s) past ${targetBytes}`);
+    }
+    padding.lines[0] = padded(deficit);
+    const text = JSON.stringify(doc);
+    const size = new TextEncoder().encode(text).length;
+    if (size !== targetBytes) {
+      throw new Error(`the padded document is ${size} bytes rather than ${targetBytes}`);
+    }
+    return text;
+  };
+
+  const largestValidShare = documentOfExactly(MAX_PLAINTEXT_BYTES);
+  holdFidelityDocument(largestValidShare);
+
+  // Both kinds, because they reach different code. The `document` case is handed
+  // the text and is the one that sees a truncation inside `validate.js`; the
+  // `decrypt` case is the one that reaches the bound on the encoded ciphertext,
+  // which no text handed to a validator ever touches.
+  cases.push({
+    name: 'document/at-the-largest-valid-share',
+    kind: 'document',
+    text: largestValidShare,
+    expect: docAdmitted(largestValidShare),
+  });
+
+  cases.push({
+    name: 'decrypt/document-at-the-largest-valid-share',
+    kind: 'decrypt',
+    a: bytesOf(named.inputs.a),
+    id: bytesOf(named.inputs.id),
+    response: responseFor(named),
+    reseal: {
+      k: bytesOf(named.inputs.k),
+      nonce: bytesOf(named.inputs.content_nonce),
+      text: largestValidShare,
+    },
+    expect: { ok: true, plaintext: largestValidShare, aad: named.inputs.aad },
+  });
+
+
+  // The container counts, which are what a document carrying every shape at
+  // every location still cannot reach. How many locations there are is not a
+  // property of any one of them, and two transforms live in exactly that gap:
+  // reversing the sections above some count, and dropping a section's last line
+  // above some count. The document above closes both at the counts it carries,
+  // seven sections and eight lines, and closes nothing above them.
+  //
+  // So these two are at the counts no valid share can exceed. A section costs at
+  // least the twenty-five characters of `{"heading":"","lines":[]}` and a line at
+  // least the two of `""`, so the largest plaintext a share can carry holds
+  // 13,777 of the first or 119,399 of the second, and the assertion below is what
+  // says those are the maxima rather than two numbers somebody liked. Above them
+  // there is no document at all, which is what makes this the end of the
+  // inequality rather than a bar to be raised again next time.
+  //
+  // Minimal rather than shaped, deliberately. What these ask is about the count;
+  // the shapes are asked at every location by the document above, and giving
+  // 13,777 sections a heading apiece would buy nothing and cost the budget the
+  // count needs.
+  const MOST_SECTIONS = 13777;
+  const MOST_LINES_IN_A_SECTION = 119399;
+
+  /**
+   * A minimal document of exactly this many sections, carrying this many lines
+   * in the first of them, padded with ASCII at the last heading to an exact size.
+   *
+   * @param {number} sections
+   * @param {number} linesInFirst
+   * @param {number} targetBytes
+   * @returns {string}
+   */
+  const containersOfExactly = (sections, linesInFirst, targetBytes) => {
+    /** @type {{ heading: string, lines: string[] }[]} */
+    const built = Array.from({ length: sections }, () => ({ heading: '', lines: [] }));
+    const first = built[0];
+    const last = built[sections - 1];
+    if (first === undefined || last === undefined) {
+      throw new Error('a document of no sections cannot carry a container count');
+    }
+    first.lines = Array.from({ length: linesInFirst }, () => '');
+    const doc = {
+      schema: 'share_doc_v1',
+      banner_key: 'relay_banner_shared_v1',
+      banner_text: '',
+      you_means: '',
+      edited: false,
+      visit_date: '',
+      topic: '',
+      sections: built,
+    };
+    const deficit = targetBytes - new TextEncoder().encode(JSON.stringify(doc)).length;
+    if (deficit < 0) {
+      throw new Error(`${sections} section(s) and ${linesInFirst} line(s) are past ${targetBytes} bytes`);
+    }
+    last.heading = 'x'.repeat(deficit);
+    const text = JSON.stringify(doc);
+    const size = new TextEncoder().encode(text).length;
+    if (size !== targetBytes) {
+      throw new Error(`the padded document is ${size} bytes rather than ${targetBytes}`);
+    }
+    return text;
+  };
+
+  const mostSections = containersOfExactly(MOST_SECTIONS, 0, MAX_PLAINTEXT_BYTES);
+  const mostLines = containersOfExactly(1, MOST_LINES_IN_A_SECTION, MAX_PLAINTEXT_BYTES);
+
+  // And that one more of either does not fit, which is the half that makes these
+  // the maxima. Without it they are two counts larger than the corpus had, and a
+  // transform gated above them would be outside the corpus again.
+  for (const [what, sections, lines] of /** @type {[string, number, number][]} */ ([
+    ['section', MOST_SECTIONS + 1, 0],
+    ['line', 1, MOST_LINES_IN_A_SECTION + 1],
+  ])) {
+    let fitted = true;
+    try {
+      containersOfExactly(sections, lines, MAX_PLAINTEXT_BYTES);
+    } catch {
+      fitted = false;
+    }
+    if (fitted) {
+      throw new Error(`one more ${what} still fits, so the count above is not the largest a share can carry`);
+    }
+  }
+
+  cases.push({
+    name: 'document/at-the-most-sections-a-share-can-carry',
+    kind: 'document',
+    text: mostSections,
+    expect: docAdmitted(mostSections),
+  });
+
+  cases.push({
+    name: 'document/at-the-most-lines-a-section-can-carry',
+    kind: 'document',
+    text: mostLines,
+    expect: docAdmitted(mostLines),
+  });
 
   const duplicateMember = named.inputs.plaintext.replace(
     '"topic":"Example topic"',

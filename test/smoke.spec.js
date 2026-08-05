@@ -1,4 +1,7 @@
 import { expect, test } from '@playwright/test';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The viewer's module graph, as the page loads it.
@@ -13,8 +16,18 @@ import { expect, test } from '@playwright/test';
  * A list rather than a count, and the whole list rather than a floor: a module
  * dropping out of the graph and a module joining it are both changes to what the
  * page loads, and both should be an edit here. `crypto.js` is served and is
- * deliberately not in it — nothing in the graph imports it yet — so this list is
- * also the record of how far the boot seam currently reaches.
+ * deliberately not on it, which is a fact about what the page fetched rather
+ * than a reading of anyone's import statements.
+ *
+ * Fetched is what this list is, and only that. A request list says a file was
+ * asked for; it does not say what asked for it, and nothing downstream of it
+ * can. That these fetches came from static imports is inferred, from the other
+ * reads in the test below rather than from the requests: the page names one
+ * module script and no other script, carries no preloading link of either
+ * spelling, and is the elements it is — so the ways a module could be fetched
+ * without a module importing it are closed one at a time, and what is left is
+ * the entry point and its imports. The inference is only ever as good as those
+ * reads, which is why they are whole-list comparisons and not searches.
  *
  * @type {readonly string[]}
  */
@@ -22,6 +35,62 @@ const MODULE_GRAPH = ['/js/main.js', '/js/dispatch.js', '/js/validate.js', '/js/
 
 /** The one module the page itself names, which the rest of the graph hangs off. */
 const ENTRY_POINT = 'js/main.js';
+
+/** The one stylesheet the page names. */
+const STYLESHEET = 'css/viewer.css';
+
+/** The id of the element the entry point resolves, spelled here as the page spells it. */
+const ROOT_ID = 'viewer-root';
+
+/**
+ * Every element the served page carries, in document order, with every
+ * attribute each one has.
+ *
+ * The page is nine elements long, so what it is made of is written down rather
+ * than described. That is what makes the assertions about links and scripts
+ * below into a statement about the page's whole fetching surface instead of a
+ * statement about two element names: an `<img>`, an `<iframe>`, a `<video>` with
+ * a `<source>`, an `<object>` or an `<embed>` each fetch whatever their
+ * attribute names, none of them is a link or a script, and every one of them
+ * would put a file into the request list that no module imported. Rather than
+ * enumerate the element names that can fetch — a list nobody finishes, and one
+ * that grows with the platform — the page is required to be the elements it is.
+ *
+ * Attributes as well as names, because a tag list is not the fetching surface
+ * either. Which elements the page has says nothing about what they carry, and an
+ * attribute on an element that is already here fetches just as well as a new
+ * element does: `style="background-image:url('js/dispatch.js')"` on the `<html>`
+ * element that has always been here puts a module in the request list with the
+ * tag list unchanged, and so does a `background`, a `formaction`, or an `src`
+ * moved onto something that did not have one. Two of the nine elements here are
+ * `meta` tags carrying nothing but a name, and a name is one word from
+ * `http-equiv="refresh"`, which navigates. So each element is required to carry
+ * exactly the attributes it carries, by name and by value.
+ *
+ * @type {readonly { tag: string, attributes: Readonly<Record<string, string>> }[]}
+ */
+const PAGE_ELEMENTS = [
+  { tag: 'html', attributes: { lang: 'en' } },
+  { tag: 'head', attributes: {} },
+  { tag: 'meta', attributes: { charset: 'utf-8' } },
+  { tag: 'meta', attributes: { name: 'viewport', content: 'width=device-width, initial-scale=1' } },
+  { tag: 'title', attributes: {} },
+  { tag: 'link', attributes: { rel: 'stylesheet', href: STYLESHEET } },
+  { tag: 'script', attributes: { type: 'module', src: ENTRY_POINT } },
+  { tag: 'body', attributes: {} },
+  { tag: 'main', attributes: { id: ROOT_ID } },
+];
+
+/**
+ * Where the page records the element lookups made in it.
+ *
+ * The entry point's whole observable act, in this scaffold, is asking the
+ * document for one element by id. Nothing it does afterwards writes anything or
+ * reaches anywhere, so that lookup is the only trace its top-level call leaves —
+ * and a page instrumented to record lookups before any of its own scripts run is
+ * where the trace can be read.
+ */
+const ROOT_LOOKUPS = '__viewerRootLookups';
 
 /**
  * Harness smoke test.
@@ -43,10 +112,80 @@ const ENTRY_POINT = 'js/main.js';
  * So the graph is read from the requests the page actually made. The page names
  * one entry point; that entry point has to have been fetched and answered; and
  * everything it imports has to have been fetched and answered too, because a
- * module graph is fetched whole before it is evaluated. Fetched-and-answered is
- * not by itself evaluated — but a graph that fetched completely and then failed
- * to evaluate reports an error to the page, and the two assertions at the end
- * are what say none was reported. Together they are the claim in the name.
+ * module graph is fetched whole before it is evaluated.
+ *
+ * Fetched is not imported, and it is worth being exact about the difference,
+ * because two edits turn one into the other and neither is visible in a list of
+ * requests. A module can be fetched without any module importing it — a
+ * `<link rel="modulepreload">` in the head fetches it, and so does a `preload`
+ * of the same file — so stripping the entry point's imports and preloading the
+ * rest leaves this list exactly as it is while the graph behind the entry point
+ * is gone. And a second script in the page can fetch anything at all, and so can
+ * an element that is neither a link nor a script: `<img src="js/dispatch.js">`
+ * fetches a module the request list then carries while nothing imported it. So
+ * what the page carries is read whole rather than searched for — the link list,
+ * the script list, and the elements of the page itself with every attribute each
+ * one carries, all three compared against what is written at the top of this
+ * file — which is what makes a fetch of a module a fetch some module asked for.
+ *
+ * Elements and attributes both, because either alone is a surface with a hole in
+ * it. A new element that fetches is caught by the element list; an attribute
+ * added to an element already on that list is not, and an inline
+ * `style="background-image:url(…)"` on the `<html>` element fetches whatever it
+ * names with every tag in the page unchanged. So the read is the whole of each
+ * element, name and attributes together.
+ *
+ * Fetching surfaces outside all three of those reads are residuals rather than
+ * things covered, and there is more than one of them. This used to say there was
+ * exactly one, which was a claim about what had been thought of rather than about
+ * what the reads reach. Three are known, and none of them is chased with new
+ * machinery here:
+ *
+ *   - A stylesheet fetches, through `url()` and through `@import`, and neither is
+ *     an element or an attribute — it is the content of a file. What stands in
+ *     for reading it is narrow and is worth naming rather than implying: the page
+ *     names exactly one stylesheet, which is the link assertion below and also
+ *     the `link` element's attributes in the whole-page read, and
+ *     `npm run check:sinks` scans what is under `site/` for the sinks this
+ *     project forbids. What is not established is that stylesheet fetching
+ *     something, and closing it would mean parsing CSS.
+ *   - A resource element a script builds and never inserts fetches all the same,
+ *     and the page's inventory of elements and attributes is identical
+ *     afterwards — the element was never in the page to be inventoried.
+ *   - Egress through a computed property, `navigator['sendBeacon']`, passes the
+ *     sink scan, which reads names in lines rather than what a line resolves to.
+ *     It is one of the misses that scan documents about itself.
+ *
+ * All three are the same kind of thing: a change to a served file rather than a
+ * silent one, visible in a diff, and answered at runtime by CSP — `style-src` and
+ * `img-src` for what a stylesheet fetches, `connect-src` for what leaves the
+ * page — which arrives with the deploy configuration and is where a control of
+ * this kind belongs. What is written here is where these reads stop, not a list
+ * anybody should read as finished.
+ *
+ * Fetched is not evaluated either, and that is the second half. A graph that
+ * fetched completely and then failed to evaluate reports an error to the page,
+ * and the two assertions at the end are what say none was reported — but an
+ * entry point whose top-level call has been reduced to a mention of the function
+ * evaluates perfectly and does nothing, which is the whole of what the name of
+ * this test claims. `main.js` resolves one element by id and that is its only
+ * observable act, so the lookup is instrumented before any script in the page
+ * runs and the record of it is read afterwards. Nothing about the shipped bytes
+ * changes for that: the call is already there, and this is the first thing to
+ * look at whether it happened.
+ *
+ * What that last read establishes is exactly one thing, and it is narrower than
+ * "the entry point ran": the viewer root was resolved, once, by that id. Any
+ * line producing that lookup satisfies it — the top-level call replaced by a
+ * mention of the function, with the lookup made from somewhere else, would pass.
+ * The reason it is written this way is that `boot` has no other observable: it
+ * resolves the root, returns when there is none, and refers to the seam it will
+ * hand over to. Telling "it ran" from "the lookup happened" needs an observable
+ * it does not have, and manufacturing one here would be instrumenting the test
+ * rather than reading the viewer. So this pin is the proxy, stated as a proxy.
+ * When `boot` gains work — reading the link, and the call into `dispatchDoc`
+ * that this file already knows the shape of — that work is what to assert
+ * instead, and this is the assertion to revisit then.
  *
  * There are deliberately no assertions about viewer behaviour here. That is a
  * division of labour rather than a statement about the viewer: `core.spec.js`
@@ -82,6 +221,26 @@ test('the page is served and its module graph runs without error', async ({ page
     }
   });
 
+  // Installed before anything in the page runs, so the entry point's own call is
+  // one of the calls it records. The stand-in does the real lookup and hands
+  // back the real answer; all it adds is the note that it was asked.
+  await page.addInitScript((slot) => {
+    // Reached through the global object rather than written as the names
+    // `window` and `document`, because this file type-checks in the tooling
+    // world, and that world deliberately cannot see browser globals: the harness
+    // itself runs in node, and only this callback's body runs in a page.
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    /** @type {string[]} */
+    const looked = [];
+    inPage[slot] = looked;
+    const owner = inPage['document'];
+    const real = owner.getElementById.bind(owner);
+    owner.getElementById = (/** @type {string} */ id) => {
+      looked.push(id);
+      return real(id);
+    };
+  }, ROOT_LOOKUPS);
+
   const response = await page.goto('/index.html');
 
   expect(response?.status()).toBe(200);
@@ -95,6 +254,78 @@ test('the page is served and its module graph runs without error', async ({ page
   );
   expect(entryPoints, 'the served page does not name exactly one module entry point').toEqual([ENTRY_POINT]);
 
+  // The two link kinds that fetch a module without any module importing one,
+  // named because they are the attack this closes: strip the entry point's
+  // imports, preload the rest, and the list of requests below is unchanged while
+  // nothing imports anything.
+  for (const rel of ['modulepreload', 'preload']) {
+    const preloaded = await page
+      .locator(`link[rel="${rel}"]`)
+      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('href')));
+    expect(preloaded, `the served page fetches ${rel} resources, which no module imported`).toEqual([]);
+  }
+
+  // And every link and every script the page carries, whole, because the two
+  // reads above name two spellings of a thing that has many. `rel` is a list of
+  // tokens rather than one word, so an attribute selector for `modulepreload`
+  // does not match `rel="preload modulepreload"`; `prefetch` fetches too; and a
+  // script that is not a module can fetch whatever it likes without appearing in
+  // the entry-point read above. What the page carries is short enough to write
+  // down, so it is written down: of the elements that fetch, one stylesheet link
+  // and one module script and nothing else — and, in the read after these two,
+  // that those are the only elements of either kind the page has at all. Adding
+  // either is then an edit here rather than a silent change to what the page
+  // loads.
+  const links = await page
+    .locator('link')
+    .evaluateAll((nodes) => nodes.map((node) => ({ rel: node.getAttribute('rel'), href: node.getAttribute('href') })));
+  expect(links, 'the served page carries a link element it did not before').toEqual([
+    { rel: 'stylesheet', href: STYLESHEET },
+  ]);
+
+  const scripts = await page.locator('script').evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      type: node.getAttribute('type'),
+      src: node.getAttribute('src'),
+      inline: (node.textContent ?? '').length > 0,
+    })),
+  );
+  expect(scripts, 'the served page carries a script element it did not before').toEqual([
+    { type: 'module', src: ENTRY_POINT, inline: false },
+  ]);
+
+  // And the page itself, element by element, which is what turns the two reads
+  // above into a statement about everything the page can fetch rather than about
+  // links and scripts. A link and a script are not the only elements that fetch:
+  // an `<img>`, an `<iframe>`, a `<video>` with a `<source>`, an `<object>` and
+  // an `<embed>` each fetch whatever their attributes name, and an `<img>`
+  // pointing at `js/dispatch.js` puts that module in the request list below
+  // while nothing has imported it — which is precisely the substitution the
+  // module-graph comparison is there to refuse and could not see.
+  //
+  // Written as the elements the page has rather than as the element names it may
+  // not have, for the reason every other whole-list read here is written that
+  // way: a list of what is forbidden is a list somebody has to keep finishing,
+  // and the platform keeps adding to it. This page is nine elements long.
+  //
+  // And every attribute on each of them, which is the half a tag list cannot
+  // reach. The elements above are the ones that fetch; the attributes are what
+  // they fetch, and an attribute added to an element already on this list leaves
+  // the list identical. An inline `style` with a `url()` in it on the `<html>`
+  // element loads a module that way, a `formaction` does it from a button that
+  // is not here yet, and a `meta` carrying `http-equiv="refresh"` instead of
+  // `name="viewport"` navigates the page — none of which changes a tag name.
+  // Read straight off each element rather than by asking for the attributes this
+  // test expects, so the comparison is what the page has against what is written
+  // down, in both directions.
+  const elements = await page.locator('*').evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      tag: node.tagName.toLowerCase(),
+      attributes: Object.fromEntries(Array.from(node.attributes, (one) => [one.name, one.value])),
+    })),
+  );
+  expect(elements, 'the served page carries an element or an attribute it did not before').toEqual([...PAGE_ELEMENTS]);
+
   // And the graph behind it, whole. Sorted on both sides so this is a comparison
   // of which modules the page loaded rather than of the order it happened to
   // fetch them in.
@@ -104,6 +335,30 @@ test('the page is served and its module graph runs without error', async ({ page
   for (const module of MODULE_GRAPH) {
     expect(modulesFetched.get(module), `${module} was not served`).toBe(200);
   }
+
+  // And that the viewer root was resolved, exactly once, by that id — which
+  // nothing above asks. Every assertion so far is about bytes arriving; a module
+  // whose one top-level call has been replaced by a mention of the function
+  // fetches identically, evaluates without error, and does nothing.
+  //
+  // That is the claim, and it is deliberately not the claim that `boot` ran.
+  // Resolving the root is the whole of what `boot` does that anything can see,
+  // so any line producing that lookup satisfies this — `void boot;` beside a
+  // lookup made from somewhere else reads identically from here. The two are
+  // separable only by an observable `boot` does not have yet, and inventing one
+  // for this test to read would be instrumenting the test rather than looking at
+  // the viewer. So this is a proxy for execution and is written as one. It is
+  // also the tightest proxy available: exactly one lookup and exactly that id,
+  // so a page that resolved the root twice, or resolved something else, fails.
+  //
+  // Revisit when `boot` gains work — reading the link, and the call into
+  // `dispatchDoc` whose shape this file already describes. That work is what
+  // this should be asserting, and this line is the marker saying so.
+  const rootLookups = await page.evaluate(
+    (slot) => /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (globalThis))[slot],
+    ROOT_LOOKUPS,
+  );
+  expect(rootLookups, 'the viewer root was not resolved exactly once by the id the page gives it').toEqual([ROOT_ID]);
 
   expect(pageErrors).toEqual([]);
   expect(consoleOutput).toEqual([]);
@@ -146,6 +401,65 @@ test('the development server refuses anything outside the tree it serves', async
   // that refuses everything.
   const inside = await request.get('/index.html');
   expect(inside.status()).toBe(200);
+});
+
+/**
+ * What the server hands back, against what is on disk.
+ *
+ * Everything else in this suite reads the page, and the page reads the server —
+ * so every claim in it is a claim about whatever the server served, and none of
+ * them is a claim that what it served is what this repository ships. Nothing on
+ * the browser side reads a file, and until this test there was not one
+ * comparison between a response body and a file anywhere in the suite.
+ *
+ * That gap is the one that separates three things which are supposed to be the
+ * same: what the checks scan, what the tests run against, and what a recipient
+ * receives. A response canned for one module — a rule in the server, a cache
+ * answering, anything at all between the file and the socket — plus a defect in
+ * the file on disk behind a condition the tests never take, is a viewer that is
+ * correct in this suite, correct under the sink scan, and wrong when it is
+ * deployed. The scan reads `site/`, the deploy publishes `site/`, and this is
+ * what makes the suite read it too.
+ *
+ * Every served file rather than one, because "one file arrives intact" says
+ * nothing about the next one. The comparison is over bytes: a text comparison
+ * would be a comparison of what a decoder made of two byte strings, and two
+ * different byte strings can decode alike.
+ */
+test('the bytes the server hands back are the bytes on disk', async ({ request }) => {
+  const root = fileURLToPath(new URL('../site/', import.meta.url));
+
+  /**
+   * Every file under `site/`, as a served path, found by walking rather than
+   * listed here: a file added to the tree is a file this compares, and a list
+   * written here would be a list that can fall behind the tree it is about.
+   *
+   * @param {string} directory
+   * @param {string} prefix
+   * @returns {string[]}
+   */
+  const served = (directory, prefix) =>
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory()
+        ? served(join(directory, entry.name), `${prefix}${entry.name}/`)
+        : [`${prefix}${entry.name}`],
+    );
+
+  const paths = served(root, '/');
+  // A tree this found nothing in would pass every comparison below without
+  // making one.
+  expect(paths.length, 'the served tree has no files in it').toBeGreaterThanOrEqual(3);
+
+  for (const path of paths) {
+    const response = await request.get(path);
+    expect(response.status(), `${path} was not served`).toBe(200);
+    const body = Buffer.from(await response.body());
+    const disk = readFileSync(join(root, path.slice(1)));
+    expect(
+      body.equals(disk),
+      `${path} was served as ${body.length} byte(s) and is ${disk.length} byte(s) on disk`,
+    ).toBe(true);
+  }
 });
 
 /**

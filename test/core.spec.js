@@ -88,7 +88,39 @@ test('the corpus holds in this engine', async ({ page }) => {
     'resolve',
     'sizing',
   ]);
-  expect(Object.values(MINIMUM_CASES_BY_KIND).reduce((total, floor) => total + floor, 0)).toBeGreaterThanOrEqual(460);
+  // And each floor against a number of its own, rather than the whole table
+  // against a sum. A sum is an average one level up: these floors add to well
+  // past the total that was asserted here, so any single one of them could be
+  // lowered by all of that slack — to one, for most of them — with the sum still
+  // clear and the kind it governs held up by nothing. Naming the kinds catches a
+  // row deleted; only a number per row catches a row emptied.
+  //
+  // Written as a lower bound on each floor, for the reason the three totals above
+  // are: raising a floor is an ordinary tightening and needs no edit here, while
+  // lowering one is a change to a control and has to be made in two files a
+  // reader can see disagree.
+  for (const [kind, floor] of Object.entries({
+    aad: 63,
+    base64: 26,
+    capability: 1,
+    clear: 15,
+    constants: 1,
+    cost: 8,
+    decrypt: 66,
+    derive: 9,
+    dispatch: 26,
+    document: 99,
+    fields: 12,
+    fragment: 56,
+    guard: 18,
+    instrument: 8,
+    ordering: 26,
+    render: 30,
+    resolve: 11,
+    sizing: 24,
+  })) {
+    expect(MINIMUM_CASES_BY_KIND[kind] ?? 0, `the floor on ${kind} cases`).toBeGreaterThanOrEqual(floor);
+  }
 
   // What crosses into the page is inputs. While the expectations crossed with
   // them, a driver that imported nothing and echoed each case's own expectation
@@ -211,10 +243,11 @@ test('the fast path is invoked through the runner that fails closed, and that ru
   expect(fast.minimumExecuted).toBeGreaterThanOrEqual(15);
   expect(fast.minimumExecutedPerFile).toBeGreaterThanOrEqual(3);
   expect([...fast.required]).toEqual(['core.test.mjs']);
-  expect(self.minimumFiles).toBeGreaterThanOrEqual(3);
+  expect(self.minimumFiles).toBeGreaterThanOrEqual(4);
   expect(self.minimumExecuted).toBeGreaterThanOrEqual(20);
   expect(self.minimumExecutedPerFile).toBeGreaterThanOrEqual(3);
   expect([...self.required].sort()).toEqual([
+    'check-attribution-selftest.mjs',
     'check-sinks-selftest.mjs',
     'run-browser-tests-selftest.mjs',
     'run-node-tests-selftest.mjs',
@@ -260,6 +293,7 @@ test('the node runner hands back the exit code it says it does', () => {
   expect(run('passing')).toBe(0);
   expect(run('failing')).toBe(1);
   expect(run('skipped')).toBe(1);
+  expect(run('only-suites')).toBe(1);
   expect(run('one-file-skipped')).toBe(1);
   expect(run('does-not-exist')).toBe(1);
 });

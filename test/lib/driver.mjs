@@ -122,7 +122,7 @@
  * @property {{ kind: string, field?: string }} [aadTamper] The same, aimed at
  *   the authenticated data rather than at the document, for the two kinds that
  *   are handed both.
- * @property {{ k: number[], nonce: number[], text: string }} [reseal] A
+ * @property {{ k: number[], nonce: number[], text?: string, bytes?: number[] }} [reseal] A
  *   ciphertext the corpus cannot carry, because it does not exist until it is
  *   made: this fixture's own document, spelled the way the case wants it,
  *   sealed here under the fixture's own content key and nonce over the
@@ -133,6 +133,14 @@
  *   exact length the bound on the authenticated data admits. Sealing is not
  *   asserting: what the case asserts is still what the viewer returned, read
  *   against the string that went in.
+ *
+ *   `text` seals a string, `bytes` seals bytes, and the second is not a
+ *   convenience spelling of the first. A plaintext sealed from a string is
+ *   well-formed UTF-8 by construction, so no case written that way can ask what
+ *   the decoder does with a sequence of bytes that is not — and what it does is
+ *   the difference between refusing such a document and handing back a repaired
+ *   copy of it with replacement characters standing in for the bytes. A case
+ *   names one or the other.
  *
  * @typedef {object} Observed
  * @property {string} name
@@ -686,6 +694,32 @@ export async function observeCases(payload) {
     const source = /** @type {Record<string, unknown>} */ (value);
     const field = tamper.field ?? '';
 
+    if (tamper.kind === 'callable-with-fields') {
+      // A callable that lists exactly the names a record would, which is the one
+      // shape in which the reader's first line is the only thing refusing it.
+      // The two carriers above are refused a step later for carrying the wrong
+      // field set — a function's own `length` and `name` are two names no case's
+      // list asks for — so with the shape question deleted they were still
+      // refused, and nothing observed that it had been asked.
+      //
+      // Both of those properties are configurable on a function, so they can be
+      // taken off; an arrow function has no `prototype`. What is left carries the
+      // source record's own fields and nothing else, and answers every reflection
+      // exactly as the record does.
+      const carrier = () => undefined;
+      Reflect.deleteProperty(carrier, 'length');
+      Reflect.deleteProperty(carrier, 'name');
+      for (const key of Object.keys(source)) {
+        Object.defineProperty(carrier, key, {
+          value: source[key],
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      return carrier;
+    }
+
     if (tamper.kind === 'inherit') {
       // The expected field is on the prototype and an unexpected one is own, so
       // the own count is right and the own field set is not.
@@ -975,6 +1009,15 @@ export async function observeCases(payload) {
    * share that does not authenticate, which is a different question and one the
    * corpus already asks many ways.
    *
+   * What is sealed is either a string or bytes, and the difference is the whole
+   * of why the second spelling exists. Encoding a string produces well-formed
+   * UTF-8 whatever the string is, so a case that names `text` cannot ask what
+   * the viewer does with a plaintext that is not — and the decoder's answer to
+   * that question is a refusal or a repaired copy, which is the same class of
+   * difference as the byte-order mark above. So `bytes` is assembled straight
+   * into the buffer that is sealed, one byte per element, with nothing between
+   * the case and the tag that could make it well-formed on the way.
+   *
    * Total in the same way as everything else here: a case with no `reseal` gets
    * its response back untouched, and a response that is not an object is handed
    * on as it is, because "not an object" is itself a case.
@@ -1000,7 +1043,9 @@ export async function observeCases(payload) {
         additionalData: new TextEncoder().encode(String(source['aad'])),
       },
       key,
-      new TextEncoder().encode(item.reseal.text),
+      item.reseal.bytes === undefined
+        ? new TextEncoder().encode(item.reseal.text ?? '')
+        : new Uint8Array(item.reseal.bytes),
     );
     const blob = new Uint8Array(nonce.length + sealed.byteLength);
     blob.set(nonce, 0);
@@ -1225,10 +1270,14 @@ export async function observeCases(payload) {
     if (item.kind === 'fields') {
       const value = tampered(item.record, item);
 
-      // The predicate that reader starts from, asked on its own. Every other
-      // case in this family reaches it through `readOwnFields`, where anything
-      // it wrongly admitted is refused a step later for not carrying the named
-      // fields — so its answer was never the answer to anything.
+      // The predicate that reader starts from, asked on its own. Almost every
+      // other case in this family reaches it through `readOwnFields`, where a
+      // value it wrongly admitted is refused a step later for not carrying the
+      // named fields — so for those, its answer was never the answer to
+      // anything, and the call to it in that reader could be deleted with all of
+      // them still green. The one case that is not like that is the callable
+      // carrying exactly the named fields: it answers every later question the
+      // way a record does, so the shape question is the only thing left.
       if (item.predicate === true) {
         return { isRecord: parse.isRecord(value) };
       }
