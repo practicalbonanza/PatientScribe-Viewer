@@ -122,18 +122,19 @@ import { fileURLToPath } from 'node:url';
  *
  * @see REQUIRED_SPEC_FILES
  */
-export const MINIMUM_SPEC_FILES = 2;
+export const MINIMUM_SPEC_FILES = 3;
 
 /**
  * The spec files the suite is built from.
  *
- * A count alone would be satisfied by two files of anything. These are the two
- * that have to have run: the corpus, and the harness smoke test that says a page
- * was served and its module graph resolved.
+ * A count alone would be satisfied by three files of anything. These are the
+ * three that have to have run: the corpus, the harness smoke test that says a
+ * page was served and its module graph resolved, and the one that drives the
+ * viewer and reads what a recipient would see.
  *
  * @type {readonly string[]}
  */
-export const REQUIRED_SPEC_FILES = Object.freeze(['core.spec.js', 'smoke.spec.js']);
+export const REQUIRED_SPEC_FILES = Object.freeze(['core.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
 
 /**
  * The tests each spec file is built from, by title.
@@ -176,15 +177,48 @@ export const REQUIRED_TESTS = Object.freeze({
     'the development server refuses anything outside the tree it serves',
     // The one that ties together three things that are supposed to be the same:
     // what the sink scan reads, what this suite runs against, and what a
-    // recipient receives. Nothing on the browser side reads a file, so before it
-    // the suite could not tell a served response from the file behind it.
+    // recipient receives. Nothing else on the browser side puts a response body
+    // and a file side by side, so before it the suite could not tell a served
+    // response from the file behind it.
     'the bytes the server hands back are the bytes on disk',
+    // The one that holds the only region of the page a browser reads before it
+    // has a policy: the bytes from the first to the end of the policy element
+    // are written out and compared against the file this repository ships and
+    // against what a real navigation was handed, so nothing can be written ahead
+    // of the policy and fetched under none.
+    'nothing precedes the policy, in the file or in the bytes a browser is handed',
     // The one that makes the engine list below mean something. Everything here
     // reads a project's name, and a name is not an engine: pointing the project
     // called `webkit` at Chromium is one word in the harness configuration, and
     // it left every count, every engine and every named test clear with WebKit
     // never having started. That test asks the page what it is.
     'the engine running this project is the engine the project names',
+    // The one that asks a browser to enforce the policy the page carries rather
+    // than asking the page what policy it is carrying. A policy is a string
+    // until something refuses a request under it, and a string is what every
+    // other reading of it here can reach.
+    'the policy the page carries is enforced against an origin that answers',
+  ]),
+  // The surface, which nothing else in this suite reads. The corpus asks what
+  // the modules return and the smoke test asks what the page loaded; neither can
+  // say that the failures collapse into one surface, that the words on it are
+  // the words that were agreed, or that nothing of the link is on the page.
+  'viewer.spec.js': Object.freeze([
+    'each state the viewer can be in is the surface it is pinned to be',
+    'a browser that fails the probe is advised, and its code field still works',
+    'a probe that answers late does not draw advice over a surface that is finished',
+    'a decrypted note is the document that was sealed, and carries nothing of the link',
+    'the link is out of the address bar before anything is sent, and nothing sent carries it',
+    'a browser that refuses to rewrite the address still draws its surface and still empties',
+    'reporting a link sends the identifier and nothing else',
+    'a wrong code can be tried again, and a body that is nearly one cannot',
+    'every failure the viewer can reach draws the same surface',
+    'a decrypted note is not left on the page underneath a later surface',
+    'a page that comes back out of the cache shows nothing it was showing',
+    'putting the page away empties it, before anything can be drawn over it',
+    'every text on every surface reaches the contrast it has to',
+    'the page reflows at a narrow width and at twice the text size',
+    'the expiry is the moment it was sealed with, spelled the one way',
   ]),
 });
 
@@ -208,9 +242,9 @@ export const MINIMUM_EXECUTED_TESTS_PER_ENGINE = 3;
  * cannot sit in the suite running nothing.
  *
  * Two, and it is a floor for a spec file this suite does not have rather than a
- * count of one it does: the smaller of the two files here carries three tests,
- * which `REQUIRED_TESTS` above lists by name, so both of them clear this several
- * times over. What it is set for is a spec file added later carrying one test —
+ * count of one it does: the smallest of the three files here carries four tests,
+ * which `REQUIRED_TESTS` above lists by name, so all three of them clear this
+ * several times over. What it is set for is a spec file added later carrying one test —
  * one test, in both engines, is two, and a file that ran nothing is zero. The
  * reason it is not one is that a file which ran at all ran in both engines, so
  * one is a count no healthy run of any spec file here can produce.
@@ -259,6 +293,10 @@ export const REQUIRED_TEST_DIR = fileURLToPath(new URL('../test', import.meta.ur
  * @property {string[]} files Spec file names that carried at least one executed test.
  * @property {number} executed Tests that ran, skipped ones excluded.
  * @property {number} failed Of those, the ones that did not pass.
+ * @property {number} flaky Of those, the ones the harness says passed only
+ *   because they were run again. A count of its own rather than a kind of
+ *   failure, because what it reports is a different thing: the test gave the
+ *   right answer in the end, and what is wrong is that it was asked twice.
  * @property {number} skipped
  * @property {Map<string, number>} byEngine Executed tests per engine.
  * @property {Map<string, number>} byFile Executed tests per spec file, with an
@@ -426,6 +464,7 @@ export function summariseRun(report) {
   const byTest = new Map();
   let executed = 0;
   let failed = 0;
+  let flaky = 0;
   let skipped = 0;
 
   /** @type {string | null} */
@@ -522,6 +561,15 @@ export function summariseRun(report) {
           // Anything that is not a skip is a test that ran: expected, flaky, or
           // unexpected. The last of those is also a failure.
           executed += 1;
+          // And the middle one is recorded on its own. `flaky` is what the
+          // harness calls a test that failed and then passed when it was run
+          // again, which it only ever does when it has been told to run one
+          // again — so this is zero on every run of this suite as it is
+          // configured, and non-zero is a fact about the run rather than about
+          // the report. What it means is read where the run is judged.
+          if (status === 'flaky') {
+            flaky += 1;
+          }
           // And so is a test whose attempts failed while the harness called the
           // outcome expected, which is what `test.fail()` over a failing
           // assertion produces. That reads as a pass to the line above and is a
@@ -583,6 +631,7 @@ export function summariseRun(report) {
     files: [...files].sort(),
     executed,
     failed,
+    flaky,
     skipped,
     byEngine,
     byFile,
@@ -722,6 +771,36 @@ export function checkBrowserRun(run) {
 
   if (summary.failed > 0) {
     failures.push(`${summary.failed} test(s) failed`);
+  }
+
+  // And a test that only passed the second time is not a test that passed.
+  //
+  // The harness runs each test once, because the number of times it runs one is
+  // a setting and that setting is at its default. Nothing said so. Every floor
+  // above is about which tests ran and how many, and a run made with that
+  // setting raised reports a test that failed and then passed as `flaky` — an
+  // outcome that is not a failure to any of the counting above, and which the
+  // reading of a test's last attempt beside them treats as a pass, deliberately
+  // and correctly, because the last attempt did pass.
+  //
+  // What that turns into is the thing this whole module exists against. Several
+  // of the readings in this suite are about ordering — a probe answering after a
+  // surface has settled, a continuation resolving after a page was put away —
+  // and a race that fails once and passes on the retry is precisely what those
+  // readings are written to catch. With retries on, the first answer is thrown
+  // away and the second one is reported, and a viewer that draws over a settled
+  // surface some of the time ships with the whole chain green.
+  //
+  // Refused here rather than pinned in the harness configuration, and the
+  // difference matters: the setting can be raised in that file, named on a
+  // command line, or read out of the environment, so a pin on the file is a pin
+  // on one of the three ways to change it. This is a reading of what the run
+  // actually did, which is the same place every other floor here reads from, and
+  // it does not care how the retry was asked for.
+  if (summary.flaky > 0) {
+    failures.push(
+      `${summary.flaky} test(s) passed only after being run again, and an answer that needs a second asking is not an answer this suite reports`,
+    );
   }
 
   return failures;

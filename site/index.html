@@ -2,12 +2,44 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PatientScribe</title> <!-- Provisional; not final copy. -->
+    <title>Shared note — PatientScribe</title>
     <link rel="stylesheet" href="css/viewer.css" />
     <script type="module" src="js/main.js"></script>
   </head>
   <body>
-    <main id="viewer-root"></main>
+    <main id="viewer-root">
+      <h1 id="brand"></h1>
+      <p id="advisory" hidden><span id="advisory-lead"></span><strong id="advisory-emphasis"></strong><span id="advisory-tail"></span></p>
+      <section id="shell" hidden>
+        <p id="shell-intro"></p>
+        <p id="code-helper"></p>
+        <p id="code-row">
+          <label id="code-label" for="code-input"></label>
+          <input id="code-input" type="text" />
+          <button id="code-submit" type="button"></button>
+        </p>
+        <p id="wrong-code" hidden></p>
+      </section>
+      <p id="unavailable" hidden></p>
+      <section id="note" hidden>
+        <p id="banner"></p>
+        <p id="you-chip" hidden></p>
+        <p id="edited-chip" hidden></p>
+        <p id="visit-date"></p>
+        <p id="topic"></p>
+        <div id="note-body"></div>
+        <p id="expiry"></p>
+        <p id="get-app"><a id="app-link" href="https://apps.apple.com/au/app/id6758035505"></a></p>
+      </section>
+      <footer id="footer" hidden>
+        <details id="notice">
+          <summary id="notice-summary"></summary>
+          <p id="notice-body"><span id="notice-lead"></span><a id="policy-link" href="https://patientscribe.com.au/privacy-policy"></a><span id="notice-tail"></span></p>
+        </details>
+        <button id="report" type="button"></button>
+      </footer>
+    </main>
   </body>
 </html>

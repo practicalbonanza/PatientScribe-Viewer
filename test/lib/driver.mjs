@@ -62,6 +62,11 @@
  * @property {string} [ciphertext]
  * @property {unknown} [response] A stored response, passed to the viewer exactly
  *   as written — including when it is not an object at all.
+ * @property {boolean} [idCheck] Takes a decryption one step further: read the
+ *   authenticated data the tag covered and ask the flow whether the identifier
+ *   inside it is the identifier the link carried. The cases that name it are
+ *   about a share that decrypts and must still be refused, which no observation
+ *   of the decryption alone can be about.
  * @property {Record<string, unknown>} [responseParts] A stored response with one
  *   field too large to write into the corpus, built by `synth` instead.
  * @property {{ field: string, char: string, length: number }} [synth]
@@ -89,8 +94,16 @@
  *   read, a typed array whose `length` property disagrees with the bytes it
  *   holds, a typed array that is not the kind key material is, or a value whose
  *   `length` accessor throws.
+ * @property {{ call: string, ok?: unknown, state?: unknown, event?: unknown, id?: string, code?: string }} [flow]
+ *   Asks one of the flow's pure decisions instead of the field reader: which
+ *   outcome a response is, where a submit state goes next, or what one of the
+ *   two request bodies is. They are decisions about which fields a record
+ *   carries — the ones a server sent, and the ones this viewer writes — which is
+ *   why they are asked as part of this family rather than as a family of their
+ *   own.
  * @property {unknown} [record] The value a `fields` case hands to
- *   `readOwnFields`.
+ *   `readOwnFields`, or the response body a `flow` case hands to the
+ *   classification.
  * @property {unknown} [names] The name list a `fields` case asks for, which may
  *   deliberately repeat a name — or not be a list at all, which is the shape a
  *   string satisfied every step of that reader without being one.
@@ -161,6 +174,8 @@ export async function observeCases(payload) {
   const validate = await import(`${payload.moduleBase}validate.js`);
   const dispatch = await import(`${payload.moduleBase}dispatch.js`);
   const render = await import(`${payload.moduleBase}render.js`);
+  const format = await import(`${payload.moduleBase}format.js`);
+  const flow = await import(`${payload.moduleBase}flow.js`);
 
   /**
    * @param {unknown} value
@@ -246,11 +261,13 @@ export async function observeCases(payload) {
    * distinguishable because these doubles now hold something to lose.
    *
    * `ownNames` and `writeArguments` are about what else was done to the root, and
-   * they exist because the three counters above could not see any of it. The
-   * scaffold's render functions draw nothing after clearing, so a line writing
-   * text onto the root — a safe write, permitted by every sink rule there is —
-   * changed no counter, no child count and no outcome, and passed the whole
-   * corpus in both engines. What the root is carrying afterwards is the
+   * they exist because the three counters above could not see any of it. None of
+   * these roots is this viewer's page — none of them answers the lookup every
+   * render function opens with — so the whole of what a render function does with
+   * one is empty it and return, and nothing is drawn over it. A line writing text
+   * onto the root — a safe write, permitted by every sink rule there is —
+   * therefore changed no counter, no child count and no outcome, and passed the
+   * whole corpus in both engines. What the root is carrying afterwards is the
    * observation that catches it: a property written onto the double is an own
    * property of the double, and a clear handed something to put back is a clear
    * with an argument.
@@ -1270,6 +1287,37 @@ export async function observeCases(payload) {
     if (item.kind === 'fields') {
       const value = tampered(item.record, item);
 
+      // The flow's own decisions, which are pure and were reachable from
+      // nothing. Three of the four functions the flow exports for this had no
+      // caller outside the flow at all, so the shape of the request that carries
+      // a recipient's typed code was written down in one place and compared
+      // against nothing.
+      //
+      // A body is reported three ways — as the string that goes on the wire, as
+      // the names it parses to, and as the values under them — because those are
+      // three different failures. A body with a field renamed still parses; a
+      // body with a field added still carries the two that were there; and a
+      // body that spelled a value differently would carry the right names.
+      if (item.flow !== undefined) {
+        const asked = item.flow;
+        if (asked.call === 'classify') {
+          return { outcome: flow.classifyOpen(asked.ok, value) };
+        }
+        if (asked.call === 'submit-state') {
+          return { state: flow.nextSubmitState(asked.state, asked.event) };
+        }
+        if (asked.call === 'open-body' || asked.call === 'report-body') {
+          const body =
+            asked.call === 'open-body'
+              ? flow.openRequestBody(asked.id ?? '', asked.code ?? '')
+              : flow.reportRequestBody(asked.id ?? '');
+          const parsed = /** @type {Record<string, unknown>} */ (JSON.parse(body));
+          const names = Object.keys(parsed).sort();
+          return { body, names, values: names.map((name) => parsed[name]) };
+        }
+        return { unknownCall: asked.call };
+      }
+
       // The predicate that reader starts from, asked on its own. Almost every
       // other case in this family reaches it through `readOwnFields`, where a
       // value it wrongly admitted is refused a step later for not carrying the
@@ -1436,11 +1484,11 @@ export async function observeCases(payload) {
         const resolved = dispatch.resolveShareDocV1(aad, parsed === null ? null : parsed.value);
         render.renderShareDocV1(target.root, resolved.aad ?? null, resolved.doc ?? null);
       }
-      // What the root is carrying afterwards, beside what the call did. The
-      // scaffold draws nothing after a successful clear, so the counters alone
-      // could not tell a render that drew nothing from a render that wrote text
-      // onto the root — and writing text onto an element is a permitted write,
-      // so no sink rule would have refused it either.
+      // What the root is carrying afterwards, beside what the call did. A root
+      // that is not this viewer's page is emptied and nothing is drawn over it,
+      // so the counters alone could not tell a render that drew nothing from a
+      // render that wrote text onto the root — and writing text onto an element
+      // is a permitted write, so no sink rule would have refused it either.
       return {
         cleared: target.completed(),
         attempted: target.attempted(),
@@ -1456,8 +1504,9 @@ export async function observeCases(payload) {
         return { unknownRoot: item.root ?? null };
       }
       // The one DOM write, asked directly, because what it answers is what both
-      // render functions branch on and nothing else can show it: the surface
-      // they draw after a successful clear is, so far, nothing at all.
+      // render functions branch on and nothing else here can show it: the roots
+      // these cases use are not this viewer's page, so what those functions draw
+      // after a successful clear is nothing at all.
       //
       // `remaining` is reported beside the answer so the two can be compared. A
       // root that answers `true` while still holding children is the failure
@@ -1551,11 +1600,38 @@ export async function observeCases(payload) {
     }
 
     if (item.kind === 'decrypt') {
+      const shareId = new Uint8Array(item.id ?? []);
       const result = await cryptoCore.decryptShare(
         new Uint8Array(item.a ?? []),
-        new Uint8Array(item.id ?? []),
+        shareId,
         tampered(await resealed(responseOf(item), item), item),
       );
+
+      // The step after the tag check, for the cases that are about it.
+      //
+      // A share can decrypt cleanly and still not be the share the link named:
+      // the key is derived under the identifier the link carried, and the
+      // identifier inside the authenticated data is a separate value that the
+      // tag covers but nothing compares. So these cases go one step further than
+      // the ones above — decrypt, read the authenticated data, and ask the flow
+      // whether the two identifiers are the same. What they report is the pair,
+      // because "it decrypted" and "it was admitted" are different answers and a
+      // case that saw only the second could not tell a refusal at the comparison
+      // from a refusal at the tag.
+      if (item.idCheck === true) {
+        if (result === null) {
+          return { decrypted: false, admitted: false };
+        }
+        const validated = validate.validateAadV1(parse.parseAad(result.aad));
+        if (!validated.ok) {
+          return { decrypted: true, admitted: false };
+        }
+        return {
+          decrypted: true,
+          admitted: flow.idMatches(format.encodeBase64url(shareId), validated.aad.id),
+        };
+      }
+
       if (result === null) {
         return { ok: false, plaintext: null, aad: null };
       }

@@ -17,14 +17,20 @@
  *     corpus that has lost most of itself, what the confinement scan reaches,
  *     what the browser path's floors refuse, and what the vectors are. Those are
  *     about the harness, and the harness is the same in both places.
- *   - Two claims about the viewer that are true of its bytes rather than of any
- *     run, and so cannot be asserted from a run at all: that no module under
- *     `site/js/` can serialise JSON, and that both render functions open with
- *     the clear and the branch on it. The second of those is the clear gate,
- *     which is the one property of this viewer no observation can carry for as
- *     long as the surface drawn after a successful clear is nothing. Both are
- *     read out of the source text here, and both go when there is a surface to
- *     assert instead.
+ *   - The claims about the viewer that are true of its bytes rather than of any
+ *     run, and so cannot be asserted from a run at all. Three of them, each read
+ *     out of a served file as text: that no module under `site/js/` names the JSON
+ *     serialiser; that every visible string in `copy.js` is the string that was
+ *     agreed and that the file carries no other; and that the stylesheet's bytes
+ *     are the bytes that were reviewed. The last of those is the file whose
+ *     effect no reading of a run can see — a stylesheet changes what a page says
+ *     without a node or a string constant moving — which is why it is pinned
+ *     whole rather than read for a construct.
+ *
+ *     There was another, about both render functions opening with the clear and
+ *     branching on it, and it is not in this file any more — that one is asserted
+ *     against a page now, and a note where it used to be says which test carries
+ *     it and how.
  *   - The pins on the other path: the browser runner's command, its floors, and
  *     the titles of the tests its suite is built from. A check on whether a step
  *     of `npm run check` runs cannot live inside that step, so this file holds
@@ -33,7 +39,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -60,6 +67,9 @@ import {
   REQUIRED_TESTS,
 } from '../../scripts/run-browser-tests-core.mjs';
 import { SUITES as NODE_SUITES } from '../../scripts/run-node-tests-core.mjs';
+import { CAPABILITY_PROBE } from '../../site/js/capability.js';
+import { encodeBase64url, formatDateTime } from '../../site/js/format.js';
+import { decodeBase64url } from '../../site/js/parse.js';
 import { buildCases, canonicalJson, CASE_FIELDS, observableCases, vectors } from '../lib/cases.mjs';
 import { observeCases } from '../lib/driver.mjs';
 import {
@@ -614,11 +624,11 @@ test('the browser path is invoked through the runner that fails closed, and both
   );
   assert.equal(CHECK_COMMANDS['test:smoke'], 'node scripts/run-browser-tests.mjs');
 
-  assert.ok(MINIMUM_SPEC_FILES >= 2);
+  assert.ok(MINIMUM_SPEC_FILES >= 3);
   assert.ok(MINIMUM_BROWSER_TESTS >= 6);
   assert.ok(MINIMUM_EXECUTED_TESTS_PER_ENGINE >= 3);
   assert.ok(MINIMUM_EXECUTED_TESTS_PER_SPEC_FILE >= 2);
-  assert.deepEqual([...REQUIRED_SPEC_FILES].sort(), ['core.spec.js', 'smoke.spec.js']);
+  assert.deepEqual([...REQUIRED_SPEC_FILES].sort(), ['core.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
 
   // Both engines, named. "A viewer that behaves in one engine and not the other
   // is a viewer that has not been tested" is a claim about what runs, and until
@@ -632,7 +642,7 @@ test('the browser path is invoked through the runner that fails closed, and both
   // corpus left all of them clear — two spec files, both required, eight tests
   // executed, four in each engine — and took the corpus out of both engines.
   // Dropping a title from that list is now an edit to this file too.
-  assert.deepEqual(Object.keys(REQUIRED_TESTS).sort(), ['core.spec.js', 'smoke.spec.js']);
+  assert.deepEqual(Object.keys(REQUIRED_TESTS).sort(), ['core.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
   assert.deepEqual(
     [...(REQUIRED_TESTS['core.spec.js'] ?? [])].sort(),
     [
@@ -646,10 +656,32 @@ test('the browser path is invoked through the runner that fails closed, and both
   assert.deepEqual(
     [...(REQUIRED_TESTS['smoke.spec.js'] ?? [])].sort(),
     [
+      'nothing precedes the policy, in the file or in the bytes a browser is handed',
       'the bytes the server hands back are the bytes on disk',
       'the development server refuses anything outside the tree it serves',
       'the engine running this project is the engine the project names',
       'the page is served and its module graph runs without error',
+      'the policy the page carries is enforced against an origin that answers',
+    ],
+  );
+  assert.deepEqual(
+    [...(REQUIRED_TESTS['viewer.spec.js'] ?? [])].sort(),
+    [
+      'a browser that fails the probe is advised, and its code field still works',
+      'a browser that refuses to rewrite the address still draws its surface and still empties',
+      'a decrypted note is not left on the page underneath a later surface',
+      'a decrypted note is the document that was sealed, and carries nothing of the link',
+      'a page that comes back out of the cache shows nothing it was showing',
+      'a probe that answers late does not draw advice over a surface that is finished',
+      'a wrong code can be tried again, and a body that is nearly one cannot',
+      'each state the viewer can be in is the surface it is pinned to be',
+      'every failure the viewer can reach draws the same surface',
+      'every text on every surface reaches the contrast it has to',
+      'putting the page away empties it, before anything can be drawn over it',
+      'reporting a link sends the identifier and nothing else',
+      'the expiry is the moment it was sealed with, spelled the one way',
+      'the link is out of the address bar before anything is sent, and nothing sent carries it',
+      'the page reflows at a narrow width and at twice the text size',
     ],
   );
 
@@ -723,12 +755,16 @@ test('the self suite is required to run every check that is about another check,
       'a violation is reported at the line and with the text it is on',
       'a violation on a line longer than the report is truncated to the reported width',
       'an empty tree cannot be scanned, and says so',
+      'each destination is admitted where it ends, and nothing longer is admitted at all',
       'every alternative every rule names is refused',
       'every punctuation the code-execution rules name is refused',
       'every rule fires on at least one violation fixture',
       'every spelling of a typecheck suppression is refused',
       'markup rules reach every configured markup extension',
+      'no character carries an admitted destination on to somewhere else',
       'no module the checks are made of turns the type checker off',
+      'nothing in front of an admitted destination, and no seam inside one, carries it somewhere else',
+      'nothing written inside the scheme of a destination stops this reading it as one',
       'script rules reach .mjs, not only .js',
       'the clean fixture produces no violations',
       'the command line exits 0 on a clean tree',
@@ -739,6 +775,7 @@ test('the self suite is required to run every check that is about another check,
       'the invocation that names no tree scans the shipped one',
       'the rule set matches the independently pinned list',
       'the scan reads every line of a file, and every extension it is handed',
+      'the two requests and the three destinations are where they are allowed to be',
     ],
   );
 
@@ -753,6 +790,7 @@ test('the self suite is required to run every check that is about another check,
       'a required test is the one this suite carries, not one of its name elsewhere',
       'a run spawned where the manifest is wrong is refused, and names the step',
       "a run that named no configuration must have loaded this repository's own",
+      'a test the harness ran again until it passed is not a test this suite reports',
       'a test whose last attempt did not pass is a failure, whatever the outcome was called',
       'a tree of nothing but skipped tests exits 1',
       'a tree run in one engine exits 1',
@@ -1139,8 +1177,20 @@ test('the canonical form is what the generator pinned, and the records carry wha
 
 test('the viewer never re-serialises anything', () => {
   // The additional authenticated data is authenticated as the bytes that
-  // arrived. A viewer that can write JSON is a viewer that can write a copy of
-  // the AAD that means the same thing and hashes differently, so it cannot.
+  // arrived. The platform's serialiser is what would turn it back into a copy
+  // that means the same thing and hashes differently, so that function's name
+  // does not appear under `site/js/` at all.
+  //
+  // What this is not, and was written as though it were: a claim that the viewer
+  // cannot write JSON. It can, in one place and one shape — `flow.js` builds the
+  // bodies of its two requests from a writer that takes a string and produces a
+  // quoted string: one body of two named string fields, and one of a single
+  // named string field, which is the whole point of the second. That writer is
+  // reachable only from those two bodies, the authenticated data never passes
+  // through it, and nothing built by it is ever compared against a tag. The
+  // sentence here used to say a viewer that can write JSON can write a copy of
+  // the AAD, which is true of a general serialiser and not true of that. What
+  // this check holds is the general one.
   //
   // Lexical, and comments are not exempt: the cost is that this construct
   // cannot be named in the viewer's own prose, which is cheaper than arguing
@@ -1178,35 +1228,378 @@ test('the viewer never re-serialises anything', () => {
   }
 });
 
-test('both render functions are gated on the clear', () => {
-  // The one claim about this viewer that no observation of it can carry, and it
-  // is the one that keeps a decrypted note from being drawn over rather than
-  // replaced. Both render functions clear the root and draw nothing if it did
-  // not empty; the surface they draw after a successful clear is, in this
-  // scaffold, nothing at all — so removing the branch and keeping the call
-  // changes no behaviour any input reaches, and both engines stay green.
-  //
-  // Lexical, like the check that this viewer never re-serialises anything, and
-  // for the same reason: a property of these bytes that no run can show is a
-  // property to read out of the bytes. When the surface arrives, this becomes a
-  // behavioural test and this one goes.
-  const source = readFileSync(join(SITE_JS, 'render.js'), 'utf8');
-  const guard = 'if (!clearRoot(root)) {\n    return;\n  }';
+// The claim that used to be read out of `render.js` here — that the two renders
+// it read open with the clear and the branch on it — is a behavioural claim now,
+// and it is asserted where behaviour can be seen. `test/viewer.spec.js` carries
+// `a decrypted note is not left on the page underneath a later surface`, which
+// drives four legs inside one document. A share is decrypted onto the page and
+// the page is then put away, and what the note put there has to be gone from the
+// document rather than merely off the screen. Then the same thing three times
+// more with the body's own write replaced by a stand-in that returns and empties
+// nothing — on the way to the generic surface, on the way to a note, and on the
+// way to the line a code that did not match earns — where what has to happen is
+// that nothing is drawn at all.
+//
+// Those last three are what neither the source reading nor the first leg can
+// stand in for. A renderer reading the call's return instead of the element's
+// state draws straight over what is still there, and a leg that only ever meets
+// a clear which worked passes exactly the same. Stopping the write is what tells
+// a clear that ran from a clear that emptied nothing.
+//
+// One thing the source reading said that this does not is a count: that there
+// are exactly so many of these guards, and that each is the first thing its
+// function does. Four functions in that module carry one, three of them are
+// driven there, and the fourth is the code-entry surface, which is drawn at boot
+// before there is anything in the page to hold back. What replaces the count is
+// the module's own paragraph saying which four they are, which is prose rather
+// than a check — so a fifth surface added without a guard is caught by review
+// rather than here.
 
+test('the copy the viewer ships is the copy that was agreed', () => {
+  // The one thing in this viewer that is not a decision about code. Every
+  // visible string is agreed away from the keyboard and transcribed once, and
+  // this is the transcription being checked rather than trusted.
+  //
+  // The literals below are this test's own, written from the agreed text with
+  // every character outside ASCII spelled as an escape — so a dash that is the
+  // wrong dash, or an apostrophe that is the wrong apostrophe, is a failure
+  // here rather than something a reader would have to notice on a screen. They
+  // are not read from `copy.js` and that file is never imported: a check that
+  // takes its expectation from the thing it is checking passes whatever that
+  // thing says.
+  //
+  // What is compared is the file's own text. Every string in `copy.js` is
+  // written between backticks, which is what makes that possible: a quoted
+  // string carrying an apostrophe has to escape it, and the bytes in the file
+  // would then stop being the bytes on the page.
+  const copySource = readFileSync(join(SITE_JS, 'copy.js'), 'utf8');
+  const indexSource = readFileSync(fileURLToPath(new URL('../../site/index.html', import.meta.url)), 'utf8');
+
+  /** The title, which is part of the page rather than something drawn into it. */
+  const title = 'Shared note \u2014 PatientScribe';
+
+  /** Every string `copy.js` carries, in the order the surfaces use them. */
+  const agreed = [
+    'PatientScribe',
+    'Someone has shared a PatientScribe note with you.',
+    'They\'ll have given you a code \u2014 usually over the phone.',
+    'Code',
+    'Open the note',
+    'That code didn\'t match. Check it with the person who shared this.',
+    'This shared note is no longer available. If you were expecting it, ask the person who shared it.',
+    '\'You\' means ',
+    'Edited by ',
+    'Edited by the sharer',
+    'This link works until ',
+    'PatientScribe is free on the App Store',
+    'This app\'s built-in browser can\'t open shared notes safely. Tap \u22ef and choose ',
+    'Open in Safari',
+    ' (or Chrome).',
+    'Report a problem with this link',
+    'For people viewing a shared note.',
+    'This page shows you an encrypted note shared with you through PatientScribe. PatientScribe (DigiFrontiers) cannot decrypt stored share content under our normal, published viewer protocol \u2014 and we cannot verify who opens a share: anyone with both the link and the code can open it. When you open this page we handle your IP address and basic request data, kept briefly (up to 30 days) only to limit abuse and keep the service working; the access code you type is sent to us only to check it and is not kept (without it we can\'t show you the note); and each share link keeps a simple code-entry attempt counter while it exists \u2014 we use none of this for analytics, advertising, or profiling, we don\'t set cookies, and nothing here is used to track you across other sites or pages. Questions: support@patientscribe.com.au. Full policy: ',
+    'patientscribe.com.au/privacy-policy',
+    '.',
+  ];
+
+  for (const text of agreed) {
+    assert.equal(
+      copySource.split(`\`${text}\``).length - 1,
+      1,
+      `${JSON.stringify(text)} is not written exactly once in copy.js as a string of its own`,
+    );
+  }
+  assert.ok(copySource.includes('Object.freeze('), 'the copy table is no longer frozen');
+
+  // And the other direction, which is the one that matters for the banner: the
+  // strings in that file are exactly these and nothing else. A string it carried
+  // that is not on this list is a visible surface nobody agreed to — and the
+  // banner is the case that makes the point, because a constant there would be a
+  // second spelling of wording that travels inside the encrypted document, and a
+  // fallback the viewer could show in its place.
+  //
+  // Read with the comments taken out first, because the prose in that file uses
+  // backticks the way this repository's prose does. None of the agreed strings
+  // carries either comment opener, so removing them cannot remove part of one.
+  const withoutComments = copySource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const literals = [...withoutComments.matchAll(/`([^`]*)`/g)].map((found) => found[1]);
+  assert.deepEqual(literals, agreed, 'copy.js carries a string that was not agreed, or has lost one that was');
+
+  // And the two sentences that are split around something that is not text: the
+  // advisory around the words it emphasises, and the notice around the link to
+  // the policy. Each is held as one whole sentence here as well as in pieces, so
+  // a split moved by a space — or a piece dropped — is a failure against the
+  // sentence rather than only against the fragments.
+  const [
+    ,
+    ,
+    ,
+    ,
+    ,
+    ,
+    ,
+    ,
+    ,
+    ,
+    ,
+    ,
+    advisoryLead,
+    advisoryEmphasis,
+    advisoryTail,
+    ,
+    noticeSummary,
+    noticeLead,
+    policyLinkText,
+    noticeTail,
+  ] = agreed;
   assert.equal(
-    source.split(guard).length - 1,
-    2,
-    'render.js no longer opens both of its render functions with the clear and the branch on it',
+    `${advisoryLead}${advisoryEmphasis}${advisoryTail}`,
+    'This app\'s built-in browser can\'t open shared notes safely. Tap \u22ef and choose Open in Safari (or Chrome).',
+    'the advisory\'s pieces no longer make the sentence they are a split of',
+  );
+  assert.equal(
+    `${noticeSummary} ${noticeLead}${policyLinkText}${noticeTail}`,
+    'For people viewing a shared note. This page shows you an encrypted note shared with you through PatientScribe. PatientScribe (DigiFrontiers) cannot decrypt stored share content under our normal, published viewer protocol \u2014 and we cannot verify who opens a share: anyone with both the link and the code can open it. When you open this page we handle your IP address and basic request data, kept briefly (up to 30 days) only to limit abuse and keep the service working; the access code you type is sent to us only to check it and is not kept (without it we can\'t show you the note); and each share link keeps a simple code-entry attempt counter while it exists \u2014 we use none of this for analytics, advertising, or profiling, we don\'t set cookies, and nothing here is used to track you across other sites or pages. Questions: support@patientscribe.com.au. Full policy: patientscribe.com.au/privacy-policy.',
+    'the notice\'s pieces no longer make the notice they are a split of',
   );
 
-  // And each of the two is that function's first statement, rather than two
-  // guards in one of them.
-  for (const name of ['renderShareDocV1', 'renderUnavailable']) {
-    const at = source.indexOf(`export function ${name}(`);
-    assert.ok(at !== -1, `render.js no longer exports ${name}`);
-    const body = source.slice(source.indexOf('{', at) + 1);
-    assert.ok(body.trimStart().startsWith(guard), `${name} does not begin with the clear and the branch on it`);
+  // The three strings that are not in `copy.js`, audited where they are. The
+  // title belongs to the page; the two destinations are attributes, because a
+  // destination written into the markup is a destination no code assigns.
+  assert.equal(
+    indexSource.split(`<title>${title}</title>`).length - 1,
+    1,
+    'the page does not carry the agreed title exactly once',
+  );
+  for (const href of [
+    'href="https://apps.apple.com/au/app/id6758035505"',
+    'href="https://patientscribe.com.au/privacy-policy"',
+  ]) {
+    assert.equal(indexSource.split(href).length - 1, 1, `${href} is not written exactly once in the page`);
   }
+
+  // What must appear nowhere. The claim about decryption is made once, in the
+  // notice, in exactly the words above — scoped to stored share content, under
+  // the published protocol. Every spelling below is a stronger claim than the
+  // design supports, and the cost of one of them appearing anywhere in the
+  // served tree is that a recipient is told something untrue about what this
+  // service can see.
+  /** @type {string[]} */
+  const served = [];
+  /** @param {string} directory */
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (entry.isFile()) {
+        served.push(full);
+      }
+    }
+  };
+  walk(fileURLToPath(new URL('../../site/', import.meta.url)));
+  assert.ok(served.length >= 3, 'the served tree has nothing in it, so this reading shows nothing');
+
+  for (const file of served) {
+    const text = readFileSync(file, 'utf8').toLowerCase();
+    for (const stronger of ['cannot read', 'cannot see', 'cannot access', 'end-to-end encrypted', 'end to end encrypted']) {
+      assert.ok(!text.includes(stronger), `${file} claims ${JSON.stringify(stronger)}, which is stronger than the notice`);
+    }
+  }
+
+  // And the banner, over the whole served tree rather than over the one file the
+  // exact list above covers.
+  for (const fixture of vectors.fixtures) {
+    const wording = JSON.parse(fixture.inputs.plaintext).banner_text;
+    for (const file of served) {
+      assert.ok(
+        !readFileSync(file, 'utf8').includes(wording),
+        `${file} carries a banner's wording, which belongs to the document rather than to this viewer`,
+      );
+    }
+  }
+});
+
+test('the stylesheet the viewer ships is the stylesheet that was reviewed', () => {
+  // The one served file that is pinned whole, and the reason is what a
+  // stylesheet can do that no other served file can.
+  //
+  // Everything else about what a recipient reads is held by reading what the
+  // page says: the copy oracle above reads the strings out of the file they live
+  // in, and the browser suite reads the notice out of the elements it is written
+  // into. Both of those read text — the text of a source file, and the text a
+  // document holds — and a stylesheet changes what a page says without either of
+  // them moving. A generated-content declaration on a pseudo-element writes a
+  // sentence into a surface, and no node, no text node and no string constant
+  // changes; a display or a sizing declaration takes a whole surface off the
+  // screen while every character of it is still in the document, and a reading of
+  // the document's text sees exactly what it saw before. Measured, in both
+  // engines: a sentence added to the privacy notice this way, and the notice
+  // erased this way, both go straight past every reading of the text.
+  //
+  // The second of those is why this is the file's bytes rather than a scan for a
+  // property name. A scan can be written for the declaration that adds a
+  // sentence, and there is one — `stylesheet-content` in the forbidden-sink
+  // rules, which is where a second stylesheet would meet it. The declarations
+  // that take something off the screen are not a list anybody finishes: a size, a
+  // colour, a position, an opacity, an overflow, a clip, and the next property
+  // the platform adds. Enumerating them is the same losing game as enumerating
+  // the characters that end a URL.
+  //
+  // So the whole file is one value, and changing a byte of it is a deliberate act
+  // that updates this line. That is the whole of what this asserts: not that the
+  // stylesheet is correct, and not that the notice is intact — the pins on the
+  // notice's own text say that — but that the bytes being served are the bytes
+  // that were read.
+  //
+  // Read as bytes rather than as text, because a line ending is a byte and this
+  // is a claim about the file rather than about its lines.
+  const stylesheet = readFileSync(fileURLToPath(new URL('../../site/css/viewer.css', import.meta.url)));
+  assert.equal(
+    createHash('sha256').update(stylesheet).digest('hex'),
+    'd16b68a1d972f2da8627a9cc91cc610c6e437edbfe786c6dbe9aecbe78d445e6',
+    'the served stylesheet is not the one this pin was computed from — if the change was deliberate, ' +
+      'the new value goes here in the same change that makes it',
+  );
+});
+
+test('the expiry formatter writes one pattern, in whatever timezone the reader is in', async () => {
+  // Fixed moments in fixed timezones, against strings written out here. The
+  // formatter writes its own month and weekday names rather than asking the
+  // platform, precisely so that this table is a claim about the viewer instead
+  // of a claim about the internationalisation data an engine was built with —
+  // and a table read from the formatter would agree with it whatever it said.
+  //
+  // The zones are chosen for what they put to the arithmetic: one at the
+  // meridian, one that crosses a day boundary in each direction, one at a
+  // half-hour offset and one at three quarters of an hour. The moments are
+  // chosen for the pattern: midnight and noon, which are both twelve; a minute
+  // under ten, which is the one that is padded; and the moment the agreed
+  // pattern is illustrated with.
+  //
+  // Run in a child process per zone, because a timezone is a property of the
+  // process rather than an argument to the call.
+  /** @type {[string, number, string][]} */
+  const expected = [
+    ['UTC', 1767225600, 'Thu 1 Jan, 12:00 am'],
+    ['UTC', 1767268800, 'Thu 1 Jan, 12:00 pm'],
+    ['UTC', 1767225900, 'Thu 1 Jan, 12:05 am'],
+    ['UTC', 1752567120, 'Tue 15 Jul, 8:12 am'],
+    ['Australia/Sydney', 1767225600, 'Thu 1 Jan, 11:00 am'],
+    ['Australia/Sydney', 1767268800, 'Thu 1 Jan, 11:00 pm'],
+    ['Australia/Sydney', 1767225900, 'Thu 1 Jan, 11:05 am'],
+    ['Australia/Sydney', 1752567120, 'Tue 15 Jul, 6:12 pm'],
+    ['America/New_York', 1767225600, 'Wed 31 Dec, 7:00 pm'],
+    ['America/New_York', 1767268800, 'Thu 1 Jan, 7:00 am'],
+    ['America/New_York', 1767225900, 'Wed 31 Dec, 7:05 pm'],
+    ['America/New_York', 1752567120, 'Tue 15 Jul, 4:12 am'],
+    ['Asia/Kolkata', 1767225600, 'Thu 1 Jan, 5:30 am'],
+    ['Asia/Kolkata', 1767268800, 'Thu 1 Jan, 5:30 pm'],
+    ['Asia/Kolkata', 1767225900, 'Thu 1 Jan, 5:35 am'],
+    ['Asia/Kolkata', 1752567120, 'Tue 15 Jul, 1:42 pm'],
+    ['Pacific/Chatham', 1767225600, 'Thu 1 Jan, 1:45 pm'],
+    ['Pacific/Chatham', 1767268800, 'Fri 2 Jan, 1:45 am'],
+    ['Pacific/Chatham', 1767225900, 'Thu 1 Jan, 1:50 pm'],
+    ['Pacific/Chatham', 1752567120, 'Tue 15 Jul, 8:57 pm'],
+  ];
+
+  /** @type {Map<string, number[]>} */
+  const asked = new Map();
+  for (const [zone, epoch] of expected) {
+    asked.set(zone, [...(asked.get(zone) ?? []), epoch]);
+  }
+
+  const program = [
+    `import { formatDateTime } from ${JSON.stringify(new URL('../../site/js/format.js', import.meta.url).href)};`,
+    'const moments = JSON.parse(process.argv[1]);',
+    'process.stdout.write(JSON.stringify(moments.map((one) => formatDateTime(one))));',
+  ].join('\n');
+
+  for (const [zone, moments] of asked) {
+    const run = spawnSync(process.execPath, ['--input-type=module', '-e', program, JSON.stringify(moments)], {
+      encoding: 'utf8',
+      env: { ...process.env, TZ: zone },
+    });
+    assert.equal(run.status, 0, `${zone}: ${run.stderr}`);
+    const written = JSON.parse(run.stdout);
+    moments.forEach((moment, index) => {
+      const wanted = expected.find(([one, two]) => one === zone && two === moment)?.[2];
+      assert.equal(written[index], wanted, `${zone} at ${moment}`);
+    });
+  }
+
+  // And everything that is not a moment, which is the empty string rather than a
+  // date built out of nothing. A lead with nothing after it says less; a lead
+  // followed by a date nobody sealed says something wrong.
+  for (const notAMoment of [1.5, Number.NaN, Number.MAX_SAFE_INTEGER, -1e15, 'x', null, undefined, {}]) {
+    assert.equal(formatDateTime(notAMoment), '', `${String(notAMoment)} was formatted as a moment`);
+  }
+});
+
+test('the encoder and the strict decoder are inverses', () => {
+  // The identifier comparison is a comparison of encoded spellings, and it is
+  // only a comparison of bytes while the two directions agree. Every identifier
+  // the vectors publish goes both ways: the published spelling decodes and
+  // encodes back to itself, and the bytes it decodes to encode and decode back
+  // to themselves.
+  const published = [
+    ...vectors.fixtures.map((/** @type {any} */ one) => one.inputs.id),
+    ...vectors.derivations.map((/** @type {any} */ one) => one.inputs.id),
+    ...vectors.mismatches.map((/** @type {any} */ one) => one.inputs.id),
+    ...vectors.mismatches.map((/** @type {any} */ one) => one.inputs.aad_id),
+    vectors.capability.id,
+  ];
+  assert.ok(published.length >= 14, 'there are not enough published identifiers for this to be a reading');
+
+  for (const spelling of published) {
+    const bytes = decodeBase64url(spelling);
+    assert.ok(bytes !== null, `${spelling} is not a canonical encoding`);
+    assert.equal(encodeBase64url(bytes), spelling, `${spelling} does not encode back to itself`);
+    const again = decodeBase64url(encodeBase64url(bytes));
+    assert.deepEqual(Array.from(again ?? []), Array.from(bytes), `${spelling} does not decode back to its own bytes`);
+  }
+
+  // And every length the encoder can be handed, over bytes that are not an
+  // identifier: the remainder decides how many characters the last group writes,
+  // and the unused low bits of the final character have to be zero or the strict
+  // decoder refuses what this produced.
+  for (let length = 0; length <= 64; length += 1) {
+    const bytes = new Uint8Array(length);
+    for (let index = 0; index < length; index += 1) {
+      bytes[index] = (index * 37 + 11) % 256;
+    }
+    const spelling = encodeBase64url(bytes);
+    assert.equal(spelling.length % 4 === 1, false, `an encoding of ${length} byte(s) is a length no decoder admits`);
+    const back = decodeBase64url(spelling);
+    assert.deepEqual(Array.from(back ?? []), Array.from(bytes), `${length} byte(s) did not survive the round trip`);
+  }
+
+  // And anything that is not bytes at all, which is the empty string — a value
+  // no identifier encodes to, and so a value that matches nothing.
+  for (const notBytes of [null, undefined, 'AAA', [1, 2, 3], new Uint16Array(4), {}]) {
+    assert.equal(encodeBase64url(notBytes), '', `${String(notBytes)} was encoded as though it were bytes`);
+  }
+});
+
+test('the capability probe the viewer ships is the one the generator published', () => {
+  // The probe decides whether a recipient is told their browser cannot do this
+  // or told their share is unavailable, so it has to be a share somebody else
+  // sealed. Shipped as constants, because it runs before anything is fetched;
+  // compared here against the vector file, because constants a viewer generated
+  // for itself would be a check on this code by this code.
+  assert.deepEqual(
+    { ...CAPABILITY_PROBE },
+    { ...vectors.capability },
+    'the probe in the viewer is not the probe the generator emitted',
+  );
+  assert.ok(Object.isFrozen(CAPABILITY_PROBE));
+
+  // And what makes it a probe rather than a formality: it authenticates
+  // something. A probe sealed over an empty string would open identically
+  // whether the additional data reached the tag or not.
+  assert.ok(vectors.capability.aad.length > 0, 'the probe authenticates nothing');
+  assert.ok(vectors.capability.plaintext.length > 0, 'the probe carries no plaintext to compare');
+  assert.notEqual(vectors.capability.aad, vectors.capability.plaintext);
 });
 
 test('every fixture uses its own nonces', () => {

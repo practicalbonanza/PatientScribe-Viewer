@@ -20,6 +20,7 @@ import { extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SITE_ROOT = resolve(fileURLToPath(new URL('../site', import.meta.url)));
+// IPv4 only: where `localhost` resolves to `::1` alone the policy test fails loudly, never falsely green.
 const HOST = '127.0.0.1';
 const port = Number(process.argv[2] ?? 4173);
 

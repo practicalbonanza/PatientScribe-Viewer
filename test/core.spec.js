@@ -65,7 +65,7 @@ test('the corpus holds in this engine', async ({ page }) => {
   // count still clears the new floor, and the control is gone. The kinds are
   // named as well as counted, because a floor deleted outright is a kind with no
   // floor rather than a floor that is too low.
-  expect(MINIMUM_CASES).toBeGreaterThanOrEqual(470);
+  expect(MINIMUM_CASES).toBeGreaterThanOrEqual(497);
   expect(MINIMUM_PROBES).toBeGreaterThanOrEqual(230);
   expect(MINIMUM_SECRETS).toBeGreaterThanOrEqual(30);
   expect(Object.keys(MINIMUM_CASES_BY_KIND).sort()).toEqual([
@@ -106,11 +106,11 @@ test('the corpus holds in this engine', async ({ page }) => {
     clear: 15,
     constants: 1,
     cost: 8,
-    decrypt: 66,
+    decrypt: 81,
     derive: 9,
     dispatch: 26,
     document: 99,
-    fields: 12,
+    fields: 47,
     fragment: 56,
     guard: 18,
     instrument: 8,

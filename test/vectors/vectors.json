@@ -269,5 +269,64 @@
       "canonical": "{\"big\":9007199254740991,\"n\":0,\"neg\":-1}",
       "expected": "{\"big\":9007199254740991,\"n\":0,\"neg\":-1}"
     }
+  ],
+  "capability": {
+    "a": "kZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7A",
+    "b": "s7S1tre4ubq7vL2-v8DBwsPExcbHyMnKy8zNzs_Q0dI",
+    "id": "8PHy8_T19vf4-fr7_P3-_w",
+    "wrapped_k": "bm9wcXJzdHV2d3h58DP3nJqllmTuuz-f9QK9Mo-_qnVHFduURTehW3m6rAXrHj9YJNeZuktyGs0qjlNh",
+    "ciphertext": "jI2Oj5CRkpOUlZaXdatS5fxCJ37RqstHEyBQIF7_HLMHLd2EwGb2CJ1Ymx_y3bYK7EGnXtZHyq3peBFYUE937fL6cLrKZoY",
+    "aad": "patientscribe/capability_check_v1/aad",
+    "plaintext": "patientscribe/capability_check_v1/plaintext"
+  },
+  "mismatches": [
+    {
+      "name": "identifier-from-another-share",
+      "note": "The authenticated data names the identifier of a different share entirely. Both identifiers are canonical; the key is derived under the link's, and the tag covers the other one.",
+      "inputs": {
+        "a": "GxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo",
+        "b": "PT4_QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1w",
+        "id": "4OHi4-Tl5ufo6err7O3u7w",
+        "aad_id": "AAECAwQFBgcICQoLDA0ODw",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1785628800,\"id\":\"AAECAwQFBgcICQoLDA0ODw\",\"sfv\":\"1\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text.\",\"you_means\":\"Example Name\",\"edited\":false,\"visit_date\":\"2026-08-14\",\"topic\":\"Example topic\",\"sections\":[{\"heading\":\"Example heading\",\"lines\":[\"Example line one.\"]}]}"
+      },
+      "outputs": {
+        "wrapped_k": "cXJzdHV2d3h5ent8aIXy0bXfI2vqSzlJbCuo5ezOyE5iaPrXIPgKQ2eyEJtqBiwfW5OGfvN8TR8u4s7x",
+        "ciphertext": "k5SVlpeYmZqbnJ2eiRoz46B8RGVAFXF2TZ2w6itx_2AzWqrj0sgKLZfdm1fZUVSGtatzkvF7TKBDuOxRZnlJOw-PoYX2ZKBrR-BZqWKwUB25To8xkAKKIXBvs8IiPeB1NKmkkrcrs9FLxb43D99XXBgqQei_emRUScBvYnoOxW1DDtll-LceD_1XpliCbfMRqIgJbXUUSgbYeoTH99KUezjEnJgXG9vH6H5qfosk8q0i75Leqwpy9WzP-WUevaxKwwBfLS8zcAr76dAQj65JdROWGR7vavQ6AV6qA_Ku8pm28w5uuSAbDzJtcgywBEJfiVpYsLL4-fDOJr4BbDnAucc9dNxpfuQCn-ci5JMKXH6VBirZm660vsNuZXWAPaLzcx6ybwg"
+      }
+    },
+    {
+      "name": "identifier-differs-by-one-character",
+      "note": "The two identifiers differ in a single character, in a position where a canonical encoding may carry any character of the alphabet. A comparison that read a prefix, a suffix, or a length would admit this one.",
+      "inputs": {
+        "a": "LC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSks",
+        "b": "Tk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG0",
+        "id": "BwgJCgsMDQ4PEBESExQVFg",
+        "aad_id": "CwgJCgsMDQ4PEBESExQVFg",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1788307200,\"id\":\"CwgJCgsMDQ4PEBESExQVFg\",\"sfv\":\"1\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text.\",\"you_means\":\"Example Name\",\"edited\":false,\"visit_date\":\"2026-08-14\",\"topic\":\"Example topic\",\"sections\":[{\"heading\":\"Example heading\",\"lines\":[\"Example line one.\"]}]}"
+      },
+      "outputs": {
+        "wrapped_k": "goOEhYaHiImKi4yN8xRb4H1W4zQGuXOnxMxuaRg8pGz5FNsZPXrLsXUDWf9ouuBkJUah2gK4Yd0hOMXr",
+        "ciphertext": "pKWmp6ipqqusra6vYZPS4eiF_A5ZIVGqbIvyT2B9WG8p0-teEWBcNeD4qmfOk__QgS62QtPhuP8LBJJKRu4mfl1UB4RMyc2iqZ0gXHACyf-9IP5BUZ74RX1rVUeiTsevnWNVUIz7DQNBjaB-BppNoUkf2NV-fIhgTlGgKcyvAEwYgY7bl8NCWMZyIZ6Su57AvHvT8KAnaJABKmlWIAu1SyVHH9L3Fk1d7zzVMIlAycJHVt6YRFqTPYMmjKau2BEPXvoZYdSCRdBQIlSQ9o8ECU4SWs0Rl679sVBKtG7Ykd0lib55aKNR2LO4dry16L6UN5rl8TEx4gMXKWycXBtOb4ztCc8HJX8FbP-l-0u7KBzcCkEI4dz5AVesIndCUpp5FQ8CK_w"
+      }
+    },
+    {
+      "name": "identifier-differs-by-the-two-url-safe-characters",
+      "note": "The two identifiers differ only where the url-safe alphabet parts company with the standard one: every `-` in the link's identifier is a `_` in the sealed one and every `_` is a `-`. A comparison made after decoding through a lenient decoder — one that accepts either alphabet — calls these two the same identifier.",
+      "inputs": {
+        "a": "Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF0",
+        "b": "UFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm8",
+        "id": "-__-QEFCQ0RFRkdISUpLTA",
+        "aad_id": "_--_QEFCQ0RFRkdISUpLTA",
+        "aad": "{\"doc\":\"share_doc_v1\",\"edited\":false,\"exp\":1790985600,\"id\":\"_--_QEFCQ0RFRkdISUpLTA\",\"sfv\":\"1\",\"v\":\"link_split_v1\"}",
+        "plaintext": "{\"schema\":\"share_doc_v1\",\"banner_key\":\"relay_banner_shared_v1\",\"banner_text\":\"Example banner text.\",\"you_means\":\"Example Name\",\"edited\":false,\"visit_date\":\"2026-08-14\",\"topic\":\"Example topic\",\"sections\":[{\"heading\":\"Example heading\",\"lines\":[\"Example line one.\"]}]}"
+      },
+      "outputs": {
+        "wrapped_k": "lJWWl5iZmpucnZ6fXa9YntOIswx0Cs1MJuWoWSU5sS9cfo7vcEspphKnqixzMmTXjdmADhaVakfX4m_E",
+        "ciphertext": "tre4ubq7vL2-v8DBYFNFY-pvNxa6rY35PQbI7ezhKZ2mOBUW6ZeRi0XH1fl6Xmz4ipiXlz4LcsdwMziZusv_h2AwplQVC396mRq1QyhzCW7oM9_BDotQH4USt7zgW5XibxkOidmbfqHw9WzH-UUuMN_AQo66986SWi14tO5iJAO-Inw7xqmL338O8f4IS4OhFnWTw7YJFAZMA5SEry_HKgJFdzVJDp2ciJ6cb3EFlqpjMIll2enzQoNHlTsYkF528UvkCvwPjlea8EVxPxz1GlUn4gq50EvsA_UTGblVcKUZNzeHuAbxrwKi7BOUw0N4aRq5wtEHbPuexq8fmTql7Oxn87_5CYVFeof6Hjgz5fAWsrPtdPe_--0I0cm4Gw7gkPMl6g8"
+      }
+    }
   ]
 }

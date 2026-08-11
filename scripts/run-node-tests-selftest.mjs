@@ -327,7 +327,6 @@ test('each suite is where the runner looks for it, and holds what it is built fr
       'an emptied corpus fails rather than passes',
       'an observation carrying a field its case does not name is a failure',
       'an observation reported under the wrong name is a failure',
-      'both render functions are gated on the clear',
       'every fixture is sealed over the canonical form of its authenticated data',
       'every fixture uses its own nonces',
       'every published derived key is the one its published inputs derive',
@@ -336,14 +335,19 @@ test('each suite is where the runner looks for it, and holds what it is built fr
       'one fixture is changed by every repair that could change it',
       'the browser path is invoked through the runner that fails closed, and both engines are pinned',
       'the canonical form is what the generator pinned, and the records carry what produces it',
+      'the capability probe the viewer ships is the one the generator published',
       'the cases that ask what the decoder does with ill-formed bytes are there, by name',
       'the comparison separates values one serialisation spells the same way',
       'the confinement scan reaches a thrown value and a symbol-keyed one',
+      'the copy the viewer ships is the copy that was agreed',
       'the corpus holds',
+      'the encoder and the strict decoder are inverses',
+      'the expiry formatter writes one pattern, in whatever timezone the reader is in',
       'the interop vectors cover the shapes they are meant to',
       'the manifest check refuses each way a step can be silenced',
       'the self suite is required to run every check that is about another check, by title',
       'the stored key is watched, in every spelling the other secrets get',
+      'the stylesheet the viewer ships is the stylesheet that was reviewed',
       'the viewer never re-serialises anything',
       'two cases with one name are a failure',
       'what the driver is handed carries no expectations',
@@ -355,7 +359,7 @@ test('each suite is where the runner looks for it, and holds what it is built fr
   // list satisfies every loop over it, so the count is required to be one no
   // shortened list could reach.
   assert.ok(
-    (namedSuite('fast').requiredTests['core.test.mjs'] ?? []).length >= 24,
+    (namedSuite('fast').requiredTests['core.test.mjs'] ?? []).length >= 27,
     'the fast suite requires fewer tests than it is built from',
   );
   for (const [name, suite] of Object.entries(SUITES)) {

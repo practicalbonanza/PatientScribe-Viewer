@@ -51,7 +51,7 @@
  * derivation cases were called `derive/salt-sensitivity`, so the corpus reported
  * 302 cases while asking 301 questions.
  */
-export const MINIMUM_CASES = 485;
+export const MINIMUM_CASES = 512;
 
 /**
  * A note on what this total can and cannot hold, because it is not the binding
@@ -127,11 +127,27 @@ export const MINIMUM_CASES_BY_KIND = Object.freeze({
   clear: 15,
   constants: 1,
   cost: 8,
-  decrypt: 66,
+  // Set where the four shares that decrypt cleanly cannot be deleted together.
+  // Three of them are sealed for an identifier their link does not carry and
+  // must still be refused; the fourth is the control, sealed for the identifier
+  // its own link carries, and it says the comparison admits that one — which is
+  // what makes the other three a refusal of something rather than a comparison
+  // that refuses everything. It stood at seventy against eighty-four, which is
+  // fourteen of slack: the four could go, and every other addition of that round
+  // with them, while this line still read as though it were holding them up.
+  // Eighty-one is one above what is left when all four are gone.
+  decrypt: 81,
   derive: 9,
   dispatch: 26,
   document: 99,
-  fields: 12,
+  // Set where neither of the two families the flow's decision logic is held by
+  // can be deleted whole. Eleven cases ask what an answer to a share request is
+  // classified as and ten ask what the submit control does next; the floor was
+  // thirty-five against fifty-six, so either family could go — taking the wire
+  // shape of the one request that carries a code a recipient typed with it — and
+  // this number would still be clear. Forty-seven is one above the larger of the
+  // two remainders, which is what makes losing either of them a failure here.
+  fields: 47,
   fragment: 56,
   guard: 18,
   instrument: 8,

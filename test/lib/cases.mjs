@@ -132,6 +132,8 @@ export const CASE_FIELDS = [
   'tamper',
   'aadTamper',
   'reseal',
+  'idCheck',
+  'flow',
 ];
 
 /**
@@ -510,10 +512,11 @@ const NODE_OWN_NAMES = ['firstChild', 'replaceChildren'];
  *
  * `ownNames` is what the root is carrying once the viewer has finished with it,
  * and it is here because the counters cannot see a write that is not the clear.
- * The scaffold draws nothing after clearing, so a line putting text on the root
- * changed no count, no child and no outcome — and text on an element is a
- * permitted write, so no sink rule refused it either. What refuses it is the
- * root's own property set being exactly what it was built with.
+ * None of these roots is this viewer's page, so both render functions empty one
+ * and draw nothing over it — which meant a line putting text on the root changed
+ * no count, no child and no outcome, and text on an element is a permitted
+ * write, so no sink rule refused it either. What refuses it is the root's own
+ * property set being exactly what it was built with.
  *
  * `callable-with-a-write` is the shape the type gate above the clear is about.
  * That gate names `'object'`, and every other root it refuses is refused a step
@@ -1186,6 +1189,111 @@ export function buildCases() {
     });
   }
 
+  // The flow's four pure decisions, which nothing outside the flow was asking
+  // anything of.
+  //
+  // They are exported so that the answers can be put to inputs no server would
+  // send, and three of the four had no reader at all: the one body that carries
+  // a recipient's typed code was written in one place and compared against
+  // nothing anywhere. A body is not a surface, so no browser pin reaches its
+  // shape either — what the report body is is asserted by a browser test because
+  // that request is intercepted and read, and the request that carries the code
+  // is only ever asserted not to contain the things it must not.
+  //
+  // Which response is the one answer with a surface of its own is the same
+  // question the reader above answers, one level up: the wrong-code answer is
+  // recognised by its whole field set rather than by a field read off it, so a
+  // body carrying that field and one more is not that answer. What such a body
+  // is instead is a share to decrypt, which is not a third outcome — it is a
+  // share that will not decrypt, and the surface it reaches is the one every
+  // failure reaches. That is what separates a collapse from a distinguishable
+  // outcome, and the browser suite drives exactly one shape of it.
+  /** @type {[string, unknown, unknown, string, { kind: string, field?: string } | undefined][]} */
+  const classifications = [
+    ['the-wrong-code-answer', true, { status: 'wrong_code' }, 'wrong-code', undefined],
+    ['a-wrong-code-answer-carrying-one-more-field', true, { status: 'wrong_code', attempts_left: 2 }, 'decrypt', undefined],
+    ['a-body-carrying-no-status', true, { attempts_left: 2 }, 'decrypt', undefined],
+    ['a-status-that-is-not-the-one', true, { status: 'unavailable' }, 'decrypt', undefined],
+    ['a-status-that-is-not-a-string', true, { status: 1 }, 'decrypt', undefined],
+    ['a-share-to-decrypt', true, { b: 'a', wrapped_k: 'b', ciphertext: 'c', aad: 'd' }, 'decrypt', undefined],
+    ['a-status-that-was-not-a-success', false, { status: 'wrong_code' }, 'unavailable', undefined],
+    ['a-body-that-did-not-parse', true, null, 'unavailable', undefined],
+    ['a-body-that-is-not-a-record', true, [1, 2], 'unavailable', undefined],
+    ['a-success-that-is-not-the-boolean', 1, { status: 'wrong_code' }, 'unavailable', undefined],
+    // And the field carried somewhere the reader is documented not to look. A
+    // record whose own fields are none, answering `status` off its prototype, is
+    // not the answer this viewer knows — which is the whole reason that reader
+    // asks for own fields rather than reading one.
+    ['a-status-inherited-rather-than-carried', true, { status: 'wrong_code' }, 'decrypt', { kind: 'inherit', field: 'status' }],
+  ];
+  for (const [name, ok, record, outcome, tamper] of classifications) {
+    cases.push({
+      name: `fields/classify-${name}`,
+      kind: 'fields',
+      flow: { call: 'classify', ok },
+      record,
+      tamper,
+      expect: { outcome },
+    });
+  }
+
+  // Where a submit goes next. The one property worth holding is that a second
+  // press while a request is in flight changes nothing, and the surface can only
+  // show that the control was not pressable — which is the page's doing rather
+  // than this function's.
+  /** @type {[string, unknown, unknown, string][]} */
+  const submitStates = [
+    ['a-press-while-ready', 'ready', 'submit', 'sending'],
+    ['a-press-while-sending', 'sending', 'submit', 'sending'],
+    ['a-wrong-code-answer', 'sending', 'wrong-code', 'ready'],
+    ['a-share-to-decrypt', 'sending', 'decrypt', 'settled'],
+    ['a-failure', 'sending', 'unavailable', 'settled'],
+    ['a-press-while-settled', 'settled', 'submit', 'settled'],
+    ['an-answer-arriving-while-ready', 'ready', 'decrypt', 'ready'],
+    ['an-event-that-is-not-one', 'ready', 'nonsense', 'ready'],
+    // A state that was never a state is not a state to be left in.
+    ['a-state-that-is-not-a-string', 1, 'submit', 'settled'],
+    ['no-state-at-all', undefined, 'submit', 'settled'],
+  ];
+  for (const [name, state, event, next] of submitStates) {
+    cases.push({
+      name: `fields/submit-state-${name}`,
+      kind: 'fields',
+      flow: { call: 'submit-state', state, event },
+      expect: { state: next },
+    });
+  }
+
+  // And the two bodies, each asked for exactly the fields it is allowed to have.
+  //
+  // The identifier is a spelling of the shape one really is; the code is written
+  // to carry the characters that decide whether the writer is a writer of one
+  // string or a serialiser — a quote, a backslash, something outside printable
+  // ASCII, and a control character — because everything outside printable ASCII
+  // is escaped on the way out and nothing here was reading the result.
+  const anId = 'AAAAAAAAAAAAAAAAAAAAAA';
+  const aCode = 'a "code" with a \\ and \u00e9 and \u0007';
+  cases.push({
+    name: 'fields/open-request-body',
+    kind: 'fields',
+    flow: { call: 'open-body', id: anId, code: aCode },
+    expect: {
+      body: `{"id":"${anId}","code":"a \\"code\\" with a \\\\ and \\u00e9 and \\u0007"}`,
+      names: ['code', 'id'],
+      values: [aCode, anId],
+    },
+  });
+  cases.push({
+    name: 'fields/report-request-body',
+    kind: 'fields',
+    flow: { call: 'report-body', id: anId },
+    expect: {
+      body: `{"id":"${anId}"}`,
+      names: ['id'],
+      values: [anId],
+    },
+  });
+
   // ---- Bounds and pins -------------------------------------------------
 
   // Nothing an input can do shows any of these. A blob over a bound is refused
@@ -1271,6 +1379,63 @@ export function buildCases() {
       expect: DECRYPT_REFUSED,
     });
   }
+
+  // ---- Shares sealed for another identifier -----------------------------
+  //
+  // Every case above is about a share that does not decrypt. These are about
+  // shares that do.
+  //
+  // The key is derived under the identifier the link carried, and the
+  // authenticated data carries an identifier of its own. Nothing in the
+  // cryptography compares the two: the tag covers whatever the authenticated
+  // data says, so a share sealed for one identifier and delivered under a link
+  // naming another decrypts perfectly, hands back a document, and is not the
+  // document that link named. What refuses it is one comparison in the flow,
+  // made after the tag has verified — and a viewer without that comparison
+  // passes every other case in this corpus.
+  //
+  // Three shapes, because "different" has a shape. One identifier from another
+  // share entirely; one that differs in a single character; and one that differs
+  // only at the characters where the url-safe alphabet parts company with the
+  // standard one.
+  //
+  // That last pair is the one a reader expects a lenient decoder to blur, and it
+  // does not: the two alphabets disagree about which characters spell the last
+  // two values, not about what those values are, so a decoder accepting either
+  // alphabet still reads the two identifiers as different bytes. What it is
+  // really there for is the comparison this viewer makes, which is one of
+  // spellings — and the pair where two spellings are most nearly the same value
+  // is the pair a comparison written one token looser would let through.
+  for (const item of vectors.mismatches) {
+    cases.push({
+      name: `decrypt/sealed-for-${item.name}`,
+      kind: 'decrypt',
+      idCheck: true,
+      a: bytesOf(item.inputs.a),
+      id: bytesOf(item.inputs.id),
+      response: {
+        b: item.inputs.b,
+        wrapped_k: item.outputs.wrapped_k,
+        ciphertext: item.outputs.ciphertext,
+        aad: item.inputs.aad,
+      },
+      expect: { decrypted: true, admitted: false },
+    });
+  }
+
+  // And the control, which is what makes those three a comparison rather than
+  // three assertions that something refused. A published share, under its own
+  // link, through the same step: it decrypts and it is admitted. A comparison
+  // that refused everything would satisfy all three above and fail this one.
+  cases.push({
+    name: 'decrypt/sealed-for-the-identifier-its-own-link-carries',
+    kind: 'decrypt',
+    idCheck: true,
+    a: bytesOf(A),
+    id: bytesOf(ID),
+    response: responseFor(named),
+    expect: { decrypted: true, admitted: true },
+  });
 
   // The authenticated data of this share carries a letter followed by a
   // combining mark, where a precomposed character exists. It is there so that
@@ -2538,14 +2703,15 @@ export function buildCases() {
   // comes back is the string that went in — nothing normalises, trims,
   // truncates, collapses, reorders, deduplicates or drops.
   //
-  // Validator output, and deliberately not "what a carer reads". The renderer in
-  // `site/js/render.js` clears the root and draws nothing, and the `render`
-  // cases observe the clear and the write counters rather than any text, so
-  // nothing in this corpus is in a position to say what a recipient sees. What
-  // these cases pin is the value `validateShareDocV1` and `validateAadV1` hand
-  // back; whatever displays it is downstream of that and is asked about
-  // elsewhere. Writing the stronger claim here would be a sentence in the code
-  // that is not true of the code, which is its own defect.
+  // Validator output, and deliberately not "what a carer reads". The roots the
+  // `render` cases hand over are not this viewer's page, so the renderer empties
+  // one and draws nothing, and those cases observe the clear and the write
+  // counters rather than any text — so nothing in this corpus is in a position
+  // to say what a recipient sees. What these cases pin is the value
+  // `validateShareDocV1` and `validateAadV1` hand back; whatever displays it is
+  // downstream of that and is asked about elsewhere. Writing the stronger claim
+  // here would be a sentence in the code that is not true of the code, which is
+  // its own defect.
   //
   // Eight locations carry a string back: `banner_text`, `you_means`,
   // `visit_date`, `topic`, every `heading`, every entry of every `lines`, and —
@@ -3516,11 +3682,12 @@ export function buildCases() {
   // count catches that on its own.
   //
   // What the clear count could not catch was the table being empty, because the
-  // refusal path clears the root exactly as the handler does, and the surface
-  // this scaffold draws after clearing is nothing either way. `aadInspected` is
-  // what tells them apart: it says whether anything looked at the authenticated
-  // data, which happens when a handler ran and validated it and at no other
-  // point. With an empty table every one of these reports false.
+  // refusal path clears the root exactly as the handler does, and the roots
+  // these cases use are not this viewer's page, so what is drawn after the clear
+  // is nothing either way. `aadInspected` is what tells them apart: it says
+  // whether anything looked at the authenticated data, which happens when a
+  // handler ran and validated it and at no other point. With an empty table
+  // every one of these reports false.
   /** @type {[string, unknown, boolean][]} */
   const routedVersions = [
     ['known-version', 'share_doc_v1', true],
@@ -3629,11 +3796,12 @@ export function buildCases() {
   }
 
   // What the clear answers, asked directly, because both render functions branch
-  // on it and nothing they do afterwards can show it: the surface drawn after a
-  // successful clear is, in this scaffold, nothing. A clear that reported
-  // nothing let both of them carry on as though the root were empty — and on the
-  // unavailable path that meant the viewer believing it had replaced a decrypted
-  // note with the generic surface while the note was still on the page.
+  // on it and nothing they do afterwards can show it here: the roots below are
+  // not this viewer's page, so the surface drawn after a successful clear is
+  // nothing. A clear that reported nothing let both of them carry on as though
+  // the root were empty — and on the unavailable path that meant the viewer
+  // believing it had replaced a decrypted note with the generic surface while
+  // the note was still on the page.
   //
   // The answer is reported beside the root's own state, which is what makes it
   // an answer about the root rather than about the call. `method-ignores` is the

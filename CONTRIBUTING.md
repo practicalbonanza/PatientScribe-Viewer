@@ -139,10 +139,17 @@ identifier substitutions beyond the covered alphabet, and predicates on any axis
 constant. No longer list changes the paragraph above it; a longer list moves one named instance from
 open to closed, one value at a time.
 
-Two runtime controls are named in the code as arriving with the deploy configuration rather than
-here: CSP `connect-src` for network egress, and CSP `style-src`/`img-src` for what a stylesheet
-fetches. The build-time checks assert the same requirements at the earliest point they can be
-asserted; they are not a substitute for the runtime ones.
+The fetch-class runtime controls are carried by the page itself: the CSP in `index.html` —
+`connect-src` for network egress, `style-src` for stylesheets, `img-src` for images, and
+`default-src` for every fetch class the policy does not name on its own, which is where a font a
+stylesheet asks for lands, since `font-src` is not written out — is pinned and enforcement-tested
+here. What a page genuinely cannot carry in a `<meta>` element is three directives and no others:
+`frame-ancestors`, `report-uri` and `sandbox`. Those arrive with the deploy configuration.
+Reporting falls on both sides of that line: `report-uri` is one of the three and is dropped from a
+meta policy, while `report-to` is carried from one — what the deploy supplies for `report-to` is
+not the directive but the reporting destination it names, which a `Reporting-Endpoints` response
+header binds to an endpoint. The build-time checks assert the same requirements at the earliest
+point they can be asserted; they are not a substitute for the runtime ones.
 
 ## Working copy setup
 

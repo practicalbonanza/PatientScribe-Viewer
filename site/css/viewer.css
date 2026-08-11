@@ -1,9 +1,21 @@
 /*
- * Scaffold stylesheet.
+ * The viewer's stylesheet.
  *
- * Deliberately carries no visual design and no rules keyed to any rendered
- * surface: the surfaces themselves do not exist yet. First-party only, and it
- * stays that way — no imported fonts, no remote stylesheets, no remote images.
+ * First-party only, and it stays that way: no imported fonts, no remote
+ * stylesheets, no remote images, and no rule that names an external resource at
+ * all. Every family below is one the device already has.
+ *
+ * Two properties of this file are checked rather than described. Every text
+ * colour is required to reach the contrast the accessibility guidelines ask for
+ * against the colour actually behind it, computed from what the browser resolved
+ * rather than from what is written here. And the page is required to lay out
+ * without a horizontal scrollbar at a narrow width and at double the default
+ * text size, which is why nothing here is given a fixed width and why long
+ * unbroken text is allowed to break.
+ *
+ * `color-scheme` is declared so that a device in a dark theme is handed a page
+ * that is deliberately light rather than one the browser has inverted on its
+ * own. An inverted page is a page whose contrast nobody computed.
  */
 
 *,
@@ -14,12 +26,190 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  color-scheme: light;
 }
 
 body {
   margin: 0;
+  background: #ffffff;
+  color: #1c1c1c;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
 }
 
 [hidden] {
   display: none !important;
+}
+
+#viewer-root {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 2.5rem;
+}
+
+/* Long words and pasted identifiers break rather than widening the page. */
+#viewer-root,
+#note,
+#note-body {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+#brand {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+a {
+  color: #0f4c9c;
+}
+
+/* The advisory: present, plainly, and never in the way of the code field. */
+#advisory {
+  margin: 0 0 1.25rem;
+  padding: 0.75rem 0.875rem;
+  border-left: 4px solid #8a5a00;
+  background: #fdf6e6;
+  color: #1c1c1c;
+}
+
+#code-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0 0.75rem;
+}
+
+#code-label {
+  flex: 0 0 auto;
+}
+
+#code-input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid #6b7280;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1c1c1c;
+  font: inherit;
+}
+
+#code-submit {
+  flex: 0 0 auto;
+  padding: 0.5rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #0f4c9c;
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+#code-submit:disabled {
+  background: #5b6472;
+  cursor: default;
+}
+
+#wrong-code {
+  margin: 0 0 0.75rem;
+  color: #8a1c1c;
+}
+
+#unavailable {
+  margin: 0 0 1.5rem;
+}
+
+/* The decrypted note. */
+#banner {
+  margin: 0 0 0.875rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 6px;
+  background: #eef2f8;
+  color: #1c1c1c;
+}
+
+#you-chip,
+#edited-chip {
+  margin: 0 0 0.375rem;
+  color: #3f3f46;
+  font-size: 0.9375rem;
+}
+
+#visit-date,
+#topic {
+  margin: 0 0 0.375rem;
+}
+
+#topic {
+  font-weight: 600;
+}
+
+#note-body {
+  margin: 1rem 0 1.25rem;
+}
+
+#note-body h2 {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1.0625rem;
+  line-height: 1.35;
+}
+
+#note-body ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+#note-body li {
+  margin: 0 0 0.375rem;
+}
+
+#expiry,
+#get-app {
+  margin: 0 0 0.5rem;
+  color: #3f3f46;
+  font-size: 0.9375rem;
+}
+
+/* The footer: the notice, and the report control where there is one. */
+#footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #c7ccd4;
+  color: #3f3f46;
+  font-size: 0.9375rem;
+}
+
+#notice-summary {
+  cursor: pointer;
+}
+
+#notice-body {
+  margin: 0.625rem 0 0;
+}
+
+#report {
+  margin-top: 0.875rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #0f4c9c;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+#report:disabled {
+  color: #3f3f46;
+  text-decoration: none;
+  cursor: default;
 }

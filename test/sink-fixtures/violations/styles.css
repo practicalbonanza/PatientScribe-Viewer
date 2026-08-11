@@ -1,0 +1,77 @@
+/*
+ * Fixture: constructs the scan must catch in a stylesheet. Never served, never
+ * linked, never parsed by a browser — read only as text by the self-test.
+ *
+ * Two rules are declared for this extension and for no other, so this is the
+ * only file in this tree either of them can fire on. A line each rather than one
+ * line carrying two: a declaration that names a resource and writes text at once
+ * satisfies both from a single match, which leaves either of them free to stop
+ * matching unnoticed.
+ */
+
+/* A resource pulled in from outside the page, in every case the function's name
+ * can be written in. A CSS function name is case-insensitive and a text
+ * comparison is not, so each of these fetches what the first one does — and the
+ * property the rule claims is that the case does not matter, which is a claim
+ * about eight spellings and not about the three anybody would think to write.
+ * Three of them were listed here while the pattern read all eight, so a pattern
+ * narrowed to exactly those three would have passed every line below. */
+.pulled-in {
+  background-image: url(/x.png);
+}
+
+.pulled-in-shouted {
+  background-image: URL(/x.png);
+}
+
+.pulled-in-titled {
+  background-image: Url(/x.png);
+}
+
+.pulled-in-mixed-a {
+  background-image: uRl(/x.png);
+}
+
+.pulled-in-mixed-b {
+  background-image: uRL(/x.png);
+}
+
+.pulled-in-mixed-c {
+  background-image: urL(/x.png);
+}
+
+.pulled-in-mixed-d {
+  background-image: UrL(/x.png);
+}
+
+.pulled-in-mixed-e {
+  background-image: URl(/x.png);
+}
+
+/* Text written into the page from a stylesheet, which is the one way a served
+ * file changes what a reader sees without a node, a text node or a string
+ * constant moving. Written with the space the pattern tolerates as well as
+ * without it, because the tolerance is part of what the rule claims — and once
+ * in upper case, because a property name is read in any case by a stylesheet and
+ * in one case by a comparison, and this one declares the same generated content
+ * as the first. */
+.said::after {
+  content: ' and a sentence nobody agreed to';
+}
+
+.said-spaced::before {
+  content : ' and another one';
+}
+
+.said-shouted::after {
+  CONTENT: ' and one more';
+}
+
+/* Not violations, and here on purpose: three ordinary layout properties whose
+ * names end in the word the rule above is anchored to. A word boundary does not
+ * tell them from it, because the character in front of the word is a hyphen. */
+.laid-out {
+  align-content: center;
+  justify-content: space-between;
+  place-content: start;
+}

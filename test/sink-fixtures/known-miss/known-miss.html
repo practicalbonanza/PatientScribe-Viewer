@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+  Fixture: the one documented miss that cannot be written in a script.
+
+  A destination may leave its scheme out and borrow the page's, which is two
+  slashes and a host. Those same two characters open a comment in every script
+  this scan reads, so the pair is only read where a quote sits in front of it —
+  and an attribute written into markup with nothing quoted around it has none.
+
+  The attribute below is that spelling. A browser resolves it to the host
+  evil.example, off this origin, and the scan reports nothing on the line. The
+  self-test asserts that this whole fixture produces zero violations, so a rule
+  change that starts catching this fails there and gets written up rather than
+  quietly changing what the documented limits are.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>a destination with no quotes around it</title>
+  </head>
+  <body>
+    <a href=//evil.example/x>go</a>
+  </body>
+</html>

@@ -582,29 +582,38 @@ test('the run policy answers the questions it is asked', () => {
   assert.equal(summariseRun(reportOf(declaredFailing)).failed, 1);
 
   // And the other direction, so this is a reading of the attempts rather than a
-  // refusal of everything: a retried test that failed and then passed is the
-  // flaky pass the harness calls it.
-  const retried = [
+  // refusal of everything: attempts that end in a pass are a pass.
+  //
+  // Written under the classification a test declared to fail produces rather
+  // than under the one the harness gives a retried test, and that is a change of
+  // example rather than of the property. This used to be the retried case, and
+  // it used to assert that such a run was accepted — which was true of the
+  // policy and was the hole the case below this file's counting floors is now
+  // about: an outcome the harness only ever produces when it has been told to
+  // run a test again is refused there, by name, whatever its attempts did. What
+  // this case is about is the attempts, and they are read the same way here as
+  // they are there.
+  const endedWell = [
     ...whole,
     {
       file: 'core.spec.js',
       title: 'one that failed and then passed',
       engine: 'chromium',
-      status: 'flaky',
+      status: 'expected',
       results: [{ status: 'failed' }, { status: 'passed' }],
     },
   ];
-  assert.deepEqual(judge({ report: reportOf(retried), exitCode: 0 }), []);
+  assert.deepEqual(judge({ report: reportOf(endedWell), exitCode: 0 }), []);
 
   // The floors are floors rather than exact numbers, and the three lists are
   // lists rather than counts. Read back here so a floor lowered to nothing, or a
   // named test quietly dropped, is visible as a change to this file as well as
   // to the policy.
-  assert.ok(MINIMUM_SPEC_FILES >= 2);
+  assert.ok(MINIMUM_SPEC_FILES >= 3);
   assert.ok(MINIMUM_EXECUTED_TESTS >= MINIMUM_EXECUTED_TESTS_PER_ENGINE);
   assert.ok(MINIMUM_EXECUTED_TESTS_PER_SPEC_FILE >= 2);
-  assert.deepEqual([...REQUIRED_SPEC_FILES].sort(), ['core.spec.js', 'smoke.spec.js']);
-  assert.deepEqual(Object.keys(REQUIRED_TESTS).sort(), ['core.spec.js', 'smoke.spec.js']);
+  assert.deepEqual([...REQUIRED_SPEC_FILES].sort(), ['core.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
+  assert.deepEqual(Object.keys(REQUIRED_TESTS).sort(), ['core.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
   for (const file of REQUIRED_SPEC_FILES) {
     assert.ok((REQUIRED_TESTS[file] ?? []).length >= 1, `${file} names no test that has to have run`);
   }
@@ -761,6 +770,90 @@ test('a test whose last attempt did not pass is a failure, whatever the outcome 
   // than a refusal of everything.
   assert.deepEqual(withAttempts([{ status: 'passed' }]), []);
   assert.deepEqual(withAttempts([{ status: 'failed' }, { status: 'passed' }]), []);
+});
+
+test('a test the harness ran again until it passed is not a test this suite reports', () => {
+  // The outcome no floor here could see, and the one that would quietly undo
+  // several of the readings in the suite these floors are about.
+  //
+  // The harness runs each test once, because how many times it runs one is a
+  // setting and that setting is at its default. Nothing anywhere said so — not
+  // this file, not the policy, not the pins on the manifest — and raising it is
+  // one word in one file. A run made that way reports a test that failed and
+  // then passed as `flaky`, which is a test that ran, in the right file, in both
+  // engines, whose last attempt passed: every count in the policy clear, the
+  // reading of its attempts satisfied, and the whole step green.
+  //
+  // What that hides is the class of thing the browser suite exists for. Its
+  // readings about ordering — advice drawn over a settled surface, a
+  // continuation resolving after a page was put away — are readings of a race,
+  // and a race that fails once and passes on the retry is exactly what a retry
+  // turns into a pass. So the outcome is refused, whatever asked for it.
+  //
+  // Refused by name and separately from the failure count, because the two say
+  // different things: one is a test that gave the wrong answer, and this is a
+  // test that gave the right one only when it was asked twice.
+  const whole = wholeRun();
+
+  assert.equal(summariseRun(reportOf(whole)).flaky, 0, 'a run with nothing wrong with it reported a retried pass');
+
+  /** @type {Reported[]} */
+  const retried = [
+    ...whole,
+    { file: 'core.spec.js', title: 'one that needed a second asking', engine: 'chromium', status: 'flaky' },
+  ];
+  const summary = summariseRun(reportOf(retried));
+  assert.equal(summary.flaky, 1, 'a test the harness called flaky was not counted as one');
+  assert.equal(summary.executed, whole.length + 1, 'a test that ran twice was counted as other than one test');
+  assert.equal(summary.failed, 0, 'a retried pass was counted as a failure, which is a different thing');
+
+  const failures = judge({ report: reportOf(retried), exitCode: 0 });
+  assert.ok(
+    failures.some((line) => line.includes('passed only after being run again')),
+    `a retried pass was accepted:\n${failures.join('\n')}`,
+  );
+  assert.ok(
+    !failures.some((line) => line.includes('test(s) failed')),
+    'a retried pass was reported as a failure rather than as what it is',
+  );
+
+  // And it is the outcome the harness classified rather than the attempts under
+  // it. The same two attempts, under the classification a test declared to fail
+  // produces, are accepted — which is what the case above this one asserts — so
+  // the two cases have to part company on the same attempts, and they do.
+  /** @type {Reported[]} */
+  const declared = [
+    ...whole,
+    {
+      file: 'core.spec.js',
+      title: 'one that said what it would do',
+      engine: 'chromium',
+      status: 'expected',
+      results: [{ status: 'failed' }, { status: 'passed' }],
+    },
+  ];
+  assert.deepEqual(
+    judge({ report: reportOf(declared), exitCode: 0 }),
+    [],
+    'the same attempts under a different classification were refused, so this is not the reading it says it is',
+  );
+
+  // And a retried test whose last attempt did not pass is both things at once:
+  // it needed a second asking, and it still gave the wrong answer.
+  /** @type {Reported[]} */
+  const bothWays = [
+    ...whole,
+    {
+      file: 'core.spec.js',
+      title: 'one that needed a second asking and failed it',
+      engine: 'chromium',
+      status: 'flaky',
+      results: [{ status: 'failed' }, { status: 'failed' }],
+    },
+  ];
+  const both = judge({ report: reportOf(bothWays), exitCode: 0 });
+  assert.ok(both.some((line) => line.includes('passed only after being run again')));
+  assert.ok(both.some((line) => line.includes('test(s) failed')));
 });
 
 test('a path that merely extends another is not that path', () => {

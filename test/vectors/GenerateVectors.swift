@@ -661,6 +661,146 @@ let canonicalisations: [Canonicalisation] = [
   ),
 ]
 
+/// The share a reader decrypts to find out whether it can decrypt anything.
+///
+/// A reader that cannot do this scheme is a reader that will refuse every share
+/// it is ever handed, and the refusal it gives is the same one it gives for a
+/// share that has expired — which is a recipient told to ask the sender about
+/// something the sender cannot fix. So a reader may run one known share of its
+/// own, first, and say something useful when that share does not come back.
+///
+/// Its authenticated data is non-empty on purpose. An empty one would seal and
+/// open identically whether the additional data reached the tag or not, so a
+/// reader that dropped it entirely would pass its own check and then fail every
+/// real share.
+///
+/// Everything else about it is an ordinary share of this scheme: the same
+/// derivation, the same wrap, the same wire form. What is different is that it
+/// carries no document and no identifier a validator would recognise — it is a
+/// probe, and nothing about it should be read as a share of a note.
+struct CapabilityFixture {
+  let linkKeyStart: UInt8
+  let serverKeyStart: UInt8
+  let contentKeyStart: UInt8
+  let shareIdStart: UInt8
+  let wrapNonceStart: UInt8
+  let contentNonceStart: UInt8
+  let aad: String
+  let plaintext: String
+}
+
+let capabilityFixture = CapabilityFixture(
+  linkKeyStart: 0x91,
+  serverKeyStart: 0xB3,
+  contentKeyStart: 0xD5,
+  shareIdStart: 0xF0,
+  wrapNonceStart: 0x6E,
+  contentNonceStart: 0x8C,
+  aad: "patientscribe/capability_check_v1/aad",
+  plaintext: "patientscribe/capability_check_v1/plaintext"
+)
+
+/// A share whose key is derived under one identifier and whose authenticated
+/// data names another.
+///
+/// Both identifiers are canonical 22-character unpadded base64url, so neither is
+/// refused by anything that reads an identifier. The share decrypts cleanly: the
+/// tag covers the authenticated data as it stands, and the authenticated data is
+/// exactly what was sealed. Everything a reader checks before it compares the
+/// two identifiers therefore passes.
+///
+/// What must refuse it is the comparison itself, made after the tag has
+/// verified: the identifier the link carried, encoded, against the identifier
+/// inside the authenticated data. A reader that never makes that comparison
+/// renders these as though they were the share the link named, and no other
+/// vector in this file can tell it apart from one that does.
+struct Mismatch {
+  let name: String
+  let note: String
+  let linkKeyStart: UInt8
+  let serverKeyStart: UInt8
+  let contentKeyStart: UInt8
+  let wrapNonceStart: UInt8
+  let contentNonceStart: UInt8
+  /// The identifier the link carries and the key is derived under.
+  let salt: Data
+  /// The identifier inside the authenticated data, written from the salt's.
+  let sealedIdentifier: (String) -> String
+  let exp: Int
+  let sfv: String
+}
+
+/// The document every mismatch is sealed over.
+///
+/// A share that would render if the comparison did not refuse it, so that what
+/// these vectors put to a reader is the comparison and not a document it would
+/// have refused anyway.
+let mismatchPlaintext =
+  #"{"schema":"share_doc_v1","banner_key":"relay_banner_shared_v1","banner_text":"Example banner text.","you_means":"Example Name","edited":false,"visit_date":"2026-08-14","topic":"Example topic","sections":[{"heading":"Example heading","lines":["Example line one."]}]}"#
+
+let mismatches: [Mismatch] = [
+  Mismatch(
+    name: "identifier-from-another-share",
+    note:
+      "The authenticated data names the identifier of a different share entirely. Both identifiers are canonical; the key is derived under the link's, and the tag covers the other one.",
+    linkKeyStart: 0x1B,
+    serverKeyStart: 0x3D,
+    contentKeyStart: 0x5F,
+    wrapNonceStart: 0x71,
+    contentNonceStart: 0x93,
+    salt: patternBytes(start: 0xE0, count: 16),
+    sealedIdentifier: { _ in "AAECAwQFBgcICQoLDA0ODw" },
+    exp: 1_785_628_800,
+    sfv: "1"
+  ),
+  Mismatch(
+    name: "identifier-differs-by-one-character",
+    note:
+      "The two identifiers differ in a single character, in a position where a canonical encoding may carry any character of the alphabet. A comparison that read a prefix, a suffix, or a length would admit this one.",
+    linkKeyStart: 0x2C,
+    serverKeyStart: 0x4E,
+    contentKeyStart: 0x60,
+    wrapNonceStart: 0x82,
+    contentNonceStart: 0xA4,
+    salt: patternBytes(start: 0x07, count: 16),
+    sealedIdentifier: { salt in
+      // The first character, moved one place along the alphabet. The final
+      // character is the one whose spelling is constrained by the bits it
+      // carries, and this is nowhere near it.
+      let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+      var characters = Array(salt)
+      let first = characters[0]
+      let at = alphabet.firstIndex(of: first) ?? 0
+      characters[0] = alphabet[(at + 1) % alphabet.count]
+      return String(characters)
+    },
+    exp: 1_788_307_200,
+    sfv: "1"
+  ),
+  Mismatch(
+    name: "identifier-differs-by-the-two-url-safe-characters",
+    note:
+      "The two identifiers differ only where the url-safe alphabet parts company with the standard one: every `-` in the link's identifier is a `_` in the sealed one and every `_` is a `-`. A comparison made after decoding through a lenient decoder — one that accepts either alphabet — calls these two the same identifier.",
+    linkKeyStart: 0x3E,
+    serverKeyStart: 0x50,
+    contentKeyStart: 0x72,
+    wrapNonceStart: 0x94,
+    contentNonceStart: 0xB6,
+    // The first three bytes encode as `-__-`, and the thirteen after them are an
+    // ordinary counting run, so the substitution below has something to act on
+    // and the final character is still one a canonical encoding can end with.
+    salt: Data([0xFB, 0xFF, 0xFE]) + patternBytes(start: 0x40, count: 13),
+    sealedIdentifier: { salt in
+      String(
+        salt.map { character in
+          character == "-" ? "_" : (character == "_" ? "-" : character)
+        })
+    },
+    exp: 1_790_985_600,
+    sfv: "1"
+  ),
+]
+
 // MARK: - Generation
 
 func buildFixture(_ fixture: Fixture) throws -> JSON {
@@ -801,6 +941,129 @@ func buildCanonicalisation(_ item: Canonicalisation) throws -> JSON {
   ])
 }
 
+/// Is this exactly the canonical unpadded base64url spelling of sixteen bytes?
+///
+/// Three things, and the third is the one a length check misses. Twenty-two
+/// characters is the only length that carries sixteen bytes; every character has
+/// to be in the url-safe alphabet; and the last character carries two bits of
+/// the final byte and four bits of nothing, so only the four characters whose
+/// value has no low bits can end a canonical encoding. An identifier ending
+/// anywhere else decodes to the same bytes and is a second spelling of them,
+/// which is exactly what a strict reader refuses — and a vector built out of one
+/// would be refused for its spelling rather than for the thing it is about.
+func isCanonicalIdentifier(_ text: String) -> Bool {
+  let alphabet = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+  let characters = Array(text)
+  guard characters.count == 22 else { return false }
+  guard characters.allSatisfy({ alphabet.contains($0) }) else { return false }
+  return "AQgw".contains(characters[21])
+}
+
+func buildCapability(_ item: CapabilityFixture) throws -> JSON {
+  let linkKey = patternBytes(start: item.linkKeyStart, count: 32)
+  let serverKey = patternBytes(start: item.serverKeyStart, count: 32)
+  let contentKey = patternBytes(start: item.contentKeyStart, count: 32)
+  let shareId = patternBytes(start: item.shareIdStart, count: 16)
+  let wrapNonce = patternBytes(start: item.wrapNonceStart, count: 12)
+  let contentNonce = patternBytes(start: item.contentNonceStart, count: 12)
+
+  // The whole point of the probe is that the additional data reaches the tag,
+  // and an empty string proves nothing about that.
+  guard !item.aad.isEmpty else {
+    throw GeneratorError.malformed("the capability probe has no authenticated data, so it cannot show that any is used")
+  }
+  guard !item.plaintext.isEmpty else {
+    throw GeneratorError.malformed("the capability probe has no plaintext, so there is nothing for a reader to compare")
+  }
+
+  let kek = deriveKek(linkKey: linkKey, serverKey: serverKey, shareId: shareId)
+  let wrapped = try seal(contentKey, using: kek, nonce: wrapNonce, aad: nil)
+  let ciphertext = try seal(
+    Data(item.plaintext.utf8),
+    using: SymmetricKey(data: contentKey),
+    nonce: contentNonce,
+    aad: Data(item.aad.utf8)
+  )
+
+  guard wrapped.count == 80 else {
+    throw GeneratorError.malformed("the capability probe's wrapped key is \(wrapped.count) characters, not 80")
+  }
+
+  return .object([
+    ("a", .string(base64url(linkKey))),
+    ("b", .string(base64url(serverKey))),
+    ("id", .string(base64url(shareId))),
+    ("wrapped_k", .string(wrapped)),
+    ("ciphertext", .string(ciphertext)),
+    ("aad", .string(item.aad)),
+    ("plaintext", .string(item.plaintext)),
+  ])
+}
+
+func buildMismatch(_ item: Mismatch) throws -> JSON {
+  guard item.salt.count == 16 else {
+    throw GeneratorError.malformed("mismatch \(item.name) has a salt of \(item.salt.count) bytes, not 16")
+  }
+
+  let linkKey = patternBytes(start: item.linkKeyStart, count: 32)
+  let serverKey = patternBytes(start: item.serverKeyStart, count: 32)
+  let contentKey = patternBytes(start: item.contentKeyStart, count: 32)
+  let wrapNonce = patternBytes(start: item.wrapNonceStart, count: 12)
+  let contentNonce = patternBytes(start: item.contentNonceStart, count: 12)
+
+  let linkIdentifier = base64url(item.salt)
+  let sealedIdentifier = item.sealedIdentifier(linkIdentifier)
+
+  guard isCanonicalIdentifier(linkIdentifier), isCanonicalIdentifier(sealedIdentifier) else {
+    throw GeneratorError.malformed(
+      "mismatch \(item.name) names an identifier that is not a canonical 22-character encoding (\(linkIdentifier), \(sealedIdentifier))"
+    )
+  }
+  guard !sameCodeUnits(linkIdentifier, sealedIdentifier) else {
+    throw GeneratorError.malformed("mismatch \(item.name) seals the identifier its own link carries, so nothing is mismatched")
+  }
+
+  let aadValue = JSON.object([
+    ("v", .string("link_split_v1")),
+    ("id", .string(sealedIdentifier)),
+    ("doc", .string("share_doc_v1")),
+    ("exp", .int(item.exp)),
+    ("edited", .bool(false)),
+    ("sfv", .string(item.sfv)),
+  ])
+  let aadText = try canonical(aadValue)
+
+  let kek = deriveKek(linkKey: linkKey, serverKey: serverKey, shareId: item.salt)
+  let wrapped = try seal(contentKey, using: kek, nonce: wrapNonce, aad: nil)
+  let ciphertext = try seal(
+    Data(mismatchPlaintext.utf8),
+    using: SymmetricKey(data: contentKey),
+    nonce: contentNonce,
+    aad: Data(aadText.utf8)
+  )
+
+  guard wrapped.count == 80 else {
+    throw GeneratorError.malformed("mismatch \(item.name)'s wrapped key is \(wrapped.count) characters, not 80")
+  }
+
+  return .object([
+    ("name", .string(item.name)),
+    ("note", .string(item.note)),
+    (
+      "inputs",
+      .object([
+        ("a", .string(base64url(linkKey))),
+        ("b", .string(base64url(serverKey))),
+        ("id", .string(linkIdentifier)),
+        ("aad_id", .string(sealedIdentifier)),
+        ("aad", .string(aadText)),
+        ("plaintext", .string(mismatchPlaintext)),
+      ])
+    ),
+    ("outputs", .object([("wrapped_k", .string(wrapped)), ("ciphertext", .string(ciphertext))])),
+  ])
+}
+
 do {
   try checkMemberNameGuard()
 
@@ -823,6 +1086,8 @@ do {
     ("fixtures", .array(try fixtures.map(buildFixture))),
     ("derivations", .array(try derivations.map(buildDerivation))),
     ("canonicalisations", .array(try canonicalisations.map(buildCanonicalisation))),
+    ("capability", try buildCapability(capabilityFixture)),
+    ("mismatches", .array(try mismatches.map(buildMismatch))),
   ])
 
   let output = try pretty(document) + "\n"
@@ -832,7 +1097,8 @@ do {
 
   print(
     "GenerateVectors — wrote \(target.path): "
-      + "\(fixtures.count) fixtures, \(derivations.count) derivations, \(canonicalisations.count) canonicalisations"
+      + "\(fixtures.count) fixtures, \(derivations.count) derivations, \(canonicalisations.count) canonicalisations, "
+      + "1 capability probe, \(mismatches.count) identifier mismatches"
   )
 } catch {
   FileHandle.standardError.write(Data("GenerateVectors — failed: \(error)\n".utf8))
