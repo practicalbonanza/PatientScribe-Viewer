@@ -16,9 +16,10 @@ npm run check         # run everything
 ```
 
 `npm run check` runs the checked-JSDoc type-check, the forbidden-sink scan over `site/`, the
-self-tests, the fast test path, and the browser tests. CI runs the same command, so what passes
-locally is what passes there. The individual steps are `npm run typecheck`,
-`npm run check:sinks`, `npm run check:self`, `npm run test:fast` and `npm run test:smoke`.
+self-tests, the release check's own self-test, the fast test path, the release check's fixture
+corpus, and the browser tests. CI runs the same command, so what passes locally is what passes
+there. The individual steps are `npm run typecheck`, `npm run check:sinks`, `npm run check:self`,
+`npm run check:release`, `npm run test:fast`, `npm run test:release` and `npm run test:smoke`.
 
 The self-tests are there because a check nobody checks reports whatever it reports. Each spawns
 the thing it is about as a child process, against fixture trees with known answers, and reads
@@ -34,6 +35,15 @@ reported having done — enough files, the files the suite is built from, enough
 executed, and both engines for the browser path — and they check the manifest, so replacing a
 step of `npm run check` with something that does nothing is noticed by the steps that still
 run.
+
+## Checking a deployed release
+
+The files under `site/` are what is served, and copying them somewhere is not a check that the
+right bytes arrived, that they are the only things there, or that they are served with the
+headers this design settled. `scripts/release-check.mjs` asks that of a live origin, from
+outside, against a manifest resolved from this repository at the commit a release was built
+from. It reads and compares; it changes nothing. See `RELEASE-CHECK.md` for what it checks, how
+its frozen core and its replaceable adapters are separated, and how it is invoked at a deploy.
 
 See `LICENSE.md` — published for review, all rights reserved, not open source. See
 `CONTRIBUTING.md` — contributions are not accepted. See `SECURITY.md` to report a security

@@ -620,7 +620,15 @@ test('the browser path is invoked through the runner that fails closed, and both
   assert.deepEqual(checkManifest(readManifest()), []);
   assert.deepEqual(
     [...CHECK_STEPS],
-    ['npm run typecheck', 'npm run check:sinks', 'npm run check:self', 'npm run test:fast', 'npm run test:smoke'],
+    [
+      'npm run typecheck',
+      'npm run check:sinks',
+      'npm run check:self',
+      'npm run check:release',
+      'npm run test:fast',
+      'npm run test:release',
+      'npm run test:smoke',
+    ],
   );
   assert.equal(CHECK_COMMANDS['test:smoke'], 'node scripts/run-browser-tests.mjs');
 
@@ -642,7 +650,7 @@ test('the browser path is invoked through the runner that fails closed, and both
   // corpus left all of them clear — two spec files, both required, eight tests
   // executed, four in each engine — and took the corpus out of both engines.
   // Dropping a title from that list is now an edit to this file too.
-  assert.deepEqual(Object.keys(REQUIRED_TESTS).sort(), ['core.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
+  assert.deepEqual(Object.keys(REQUIRED_TESTS).sort(), ['core.spec.js', 'release.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
   assert.deepEqual(
     [...(REQUIRED_TESTS['core.spec.js'] ?? [])].sort(),
     [
@@ -682,6 +690,19 @@ test('the browser path is invoked through the runner that fails closed, and both
       'the expiry is the moment it was sealed with, spelled the one way',
       'the link is out of the address bar before anything is sent, and nothing sent carries it',
       'the page reflows at a narrow width and at twice the text size',
+    ],
+  );
+
+  // The two the release check cannot ask of a socket. A cookie the browser was
+  // already holding and a jar with something left in it are readings of the
+  // browser rather than of a response, and what an engine does with a fetch a
+  // response header started has to be taken in each engine to have been taken at
+  // all. Every counting floor above clears whether either of these ran.
+  assert.deepEqual(
+    [...(REQUIRED_TESTS['release.spec.js'] ?? [])].sort(),
+    [
+      'a page that sets nothing leaves nothing, and both halves of that are shown to fire',
+      'what each engine does with a fetch a response header started, measured in both arms',
     ],
   );
 
@@ -920,10 +941,30 @@ test('the manifest check refuses each way a step can be silenced', () => {
         'scripts/run-node-tests-core.mjs',
         'scripts/run-node-tests.mjs',
       ],
+      'check:release': [
+        'scripts/check-release-core.mjs',
+        'scripts/release-check-core/digests.txt',
+        'scripts/release-check-core/requests.mjs',
+        'scripts/release-check-core/verdict.mjs',
+        'test/release-fixtures/corpus.mjs',
+        'test/release.spec.js',
+      ],
       'test:fast': [
         'scripts/check-manifest-core.mjs',
         'scripts/run-node-tests-core.mjs',
         'scripts/run-node-tests.mjs',
+      ],
+      'test:release': [
+        'scripts/check-manifest-core.mjs',
+        'scripts/release-check-adapters/capture.mjs',
+        'scripts/release-check-adapters/run.mjs',
+        'scripts/release-check-core/check.mjs',
+        'scripts/run-release-tests.mjs',
+        'test/release-fixtures/certificate.mjs',
+        'test/release-fixtures/corpus.mjs',
+        'test/release-fixtures/deployment.mjs',
+        'test/release-fixtures/origin.mjs',
+        'test/release-fixtures/routes.mjs',
       ],
       'test:smoke': [
         'playwright.config.js',

@@ -12,10 +12,12 @@
     "typecheck": "tsc --noEmit -p jsconfig.json && tsc --noEmit -p tsconfig.tooling.json",
     "check:sinks": "node scripts/check-sinks.mjs",
     "check:self": "node scripts/run-node-tests.mjs self",
+    "check:release": "node scripts/check-release-core.mjs",
     "test:fast": "node scripts/run-node-tests.mjs fast",
+    "test:release": "node scripts/run-release-tests.mjs",
     "test:smoke": "node scripts/run-browser-tests.mjs",
     "vectors": "swift test/vectors/GenerateVectors.swift",
-    "check": "npm run typecheck && npm run check:sinks && npm run check:self && npm run test:fast && npm run test:smoke"
+    "check": "npm run typecheck && npm run check:sinks && npm run check:self && npm run check:release && npm run test:fast && npm run test:release && npm run test:smoke"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

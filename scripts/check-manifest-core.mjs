@@ -135,7 +135,9 @@ export const CHECK_STEPS = Object.freeze([
   'npm run typecheck',
   'npm run check:sinks',
   'npm run check:self',
+  'npm run check:release',
   'npm run test:fast',
+  'npm run test:release',
   'npm run test:smoke',
 ]);
 
@@ -148,7 +150,9 @@ export const CHECK_COMMANDS = Object.freeze({
   typecheck: 'tsc --noEmit -p jsconfig.json && tsc --noEmit -p tsconfig.tooling.json',
   'check:sinks': 'node scripts/check-sinks.mjs',
   'check:self': 'node scripts/run-node-tests.mjs self',
+  'check:release': 'node scripts/check-release-core.mjs',
   'test:fast': 'node scripts/run-node-tests.mjs fast',
+  'test:release': 'node scripts/run-release-tests.mjs',
   'test:smoke': 'node scripts/run-browser-tests.mjs',
 });
 
@@ -176,7 +180,27 @@ export const CHECK_FILES = Object.freeze({
   typecheck: ['jsconfig.json', 'tsconfig.tooling.json'],
   'check:sinks': ['scripts/check-sinks.mjs', 'scripts/check-sinks-core.mjs'],
   'check:self': ['scripts/run-node-tests.mjs', 'scripts/run-node-tests-core.mjs', 'scripts/check-manifest-core.mjs'],
+  'check:release': [
+    'scripts/check-release-core.mjs',
+    'scripts/release-check-core/digests.txt',
+    'scripts/release-check-core/requests.mjs',
+    'scripts/release-check-core/verdict.mjs',
+    'test/release-fixtures/corpus.mjs',
+    'test/release.spec.js',
+  ],
   'test:fast': ['scripts/run-node-tests.mjs', 'scripts/run-node-tests-core.mjs', 'scripts/check-manifest-core.mjs'],
+  'test:release': [
+    'scripts/run-release-tests.mjs',
+    'scripts/check-manifest-core.mjs',
+    'scripts/release-check-adapters/capture.mjs',
+    'scripts/release-check-adapters/run.mjs',
+    'scripts/release-check-core/check.mjs',
+    'test/release-fixtures/certificate.mjs',
+    'test/release-fixtures/corpus.mjs',
+    'test/release-fixtures/deployment.mjs',
+    'test/release-fixtures/origin.mjs',
+    'test/release-fixtures/routes.mjs',
+  ],
   'test:smoke': [
     'scripts/run-browser-tests.mjs',
     'scripts/run-browser-tests-core.mjs',

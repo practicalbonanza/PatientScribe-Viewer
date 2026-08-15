@@ -613,7 +613,17 @@ test('the run policy answers the questions it is asked', () => {
   assert.ok(MINIMUM_EXECUTED_TESTS >= MINIMUM_EXECUTED_TESTS_PER_ENGINE);
   assert.ok(MINIMUM_EXECUTED_TESTS_PER_SPEC_FILE >= 2);
   assert.deepEqual([...REQUIRED_SPEC_FILES].sort(), ['core.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
-  assert.deepEqual(Object.keys(REQUIRED_TESTS).sort(), ['core.spec.js', 'smoke.spec.js', 'viewer.spec.js']);
+  // One more key than there are required spec files, and the difference is
+  // deliberate. `REQUIRED_SPEC_FILES` is what the suite cannot be without;
+  // `REQUIRED_TESTS` is every test that has to have executed, and the release
+  // check's browser half is named there because its two tests are the ones no
+  // count can stand in for.
+  assert.deepEqual(Object.keys(REQUIRED_TESTS).sort(), [
+    'core.spec.js',
+    'release.spec.js',
+    'smoke.spec.js',
+    'viewer.spec.js',
+  ]);
   for (const file of REQUIRED_SPEC_FILES) {
     assert.ok((REQUIRED_TESTS[file] ?? []).length >= 1, `${file} names no test that has to have run`);
   }
@@ -714,7 +724,12 @@ test('what a run reported is counted exactly', () => {
   for (const file of REQUIRED_SPEC_FILES) {
     assert.equal(summary.byFile.get(file), whole.filter((one) => one.file === file).length);
   }
-  assert.deepEqual(summary.files, [...REQUIRED_SPEC_FILES].sort());
+  // The files this report was built from, which is a wider list than the files
+  // the suite cannot be without — every file the policy names a required test in
+  // is in the run above. Compared against the fixture's own known content rather
+  // than against either list in the policy: what is being counted here is
+  // whether the counter read the report it was handed.
+  assert.deepEqual(summary.files, [...new Set(whole.map((one) => one.file))].sort());
 
   // And the same of a run that executed nothing, so the two counters are shown
   // apart rather than one standing in for the other.
@@ -1268,7 +1283,11 @@ function scratchDefaultRepository(omit) {
     ].join('\n'),
   );
   mkdirSync(join(root, 'test'), { recursive: true });
-  for (const file of REQUIRED_SPEC_FILES) {
+  // Every file the policy asks anything of, rather than only the ones it cannot
+  // do without: a file named in `REQUIRED_TESTS` and absent from this tree is a
+  // required title that cannot execute, which would make this fixture refuse the
+  // sound default invocation for a reason that is about the fixture.
+  for (const file of [...new Set([...REQUIRED_SPEC_FILES, ...Object.keys(REQUIRED_TESTS)])]) {
     writeFileSync(join(root, 'test', file), defaultSuiteSpec(file, file === 'core.spec.js' ? omit : null));
   }
 

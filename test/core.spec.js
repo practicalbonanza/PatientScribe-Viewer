@@ -187,11 +187,21 @@ test('the fast path is invoked through the runner that fails closed, and that ru
     'npm run typecheck',
     'npm run check:sinks',
     'npm run check:self',
+    'npm run check:release',
     'npm run test:fast',
+    'npm run test:release',
     'npm run test:smoke',
   ]);
   expect(CHECK_COMMANDS['test:fast']).toBe('node scripts/run-node-tests.mjs fast');
   expect(CHECK_COMMANDS['check:self']).toBe('node scripts/run-node-tests.mjs self');
+
+  // And the two steps the release check is reached through, spelled out here for
+  // the reason the other four are: the manifest and the pin it is compared
+  // against are two files that can both be edited at once, and a step named in
+  // both and spelled nowhere else is a step that can be replaced by something
+  // that does nothing without any comparison disagreeing.
+  expect(CHECK_COMMANDS['check:release']).toBe('node scripts/check-release-core.mjs');
+  expect(CHECK_COMMANDS['test:release']).toBe('node scripts/run-release-tests.mjs');
 
   // And the two steps that had no second copy of their command anywhere. The
   // manifest check compares what `package.json` says against the pins in

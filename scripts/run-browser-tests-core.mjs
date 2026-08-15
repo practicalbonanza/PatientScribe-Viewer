@@ -220,6 +220,18 @@ export const REQUIRED_TESTS = Object.freeze({
     'the page reflows at a narrow width and at twice the text size',
     'the expiry is the moment it was sealed with, spelled the one way',
   ]),
+  // The half of the release check that needs a browser. Neither of these can be
+  // reached from a socket: what a browsing context is left holding after a page
+  // has loaded is a reading of the browser, and what an engine does with a fetch
+  // that a response header started is a fact about engines that has to be taken
+  // in each of them. Both are named here for the reason every title here is —
+  // the counting floors clear whether these ran or not, so a `.skip` on either
+  // would take a browser-measured item out of both engines with every number in
+  // this file still satisfied.
+  'release.spec.js': Object.freeze([
+    'a page that sets nothing leaves nothing, and both halves of that are shown to fire',
+    'what each engine does with a fetch a response header started, measured in both arms',
+  ]),
 });
 
 /** The fewest tests that can be called a run of the browser suite. */
