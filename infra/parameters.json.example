@@ -1,0 +1,16 @@
+[
+  { "ParameterKey": "Environment", "ParameterValue": "dev" },
+  { "ParameterKey": "RequestCountAlarmThreshold", "ParameterValue": "10000" },
+
+  { "ParameterKey": "ApiOrigin", "ParameterValue": "REPLACE-ME--https-scheme-and-host-of-the-share-api" },
+  { "ParameterKey": "AccountId", "ParameterValue": "REPLACE-ME--the-twelve-digit-account-number" },
+  { "ParameterKey": "OriginBucketName", "ParameterValue": "REPLACE-ME--origin-bucket-name" },
+  { "ParameterKey": "LogBucketName", "ParameterValue": "REPLACE-ME--access-log-bucket-name" },
+  { "ParameterKey": "ReleaseLogBucketName", "ParameterValue": "REPLACE-ME--release-log-bucket-name" },
+  { "ParameterKey": "LogOpsPrefix", "ParameterValue": "REPLACE-ME--release-log-key-prefix" },
+  { "ParameterKey": "AlarmTopicArn", "ParameterValue": "REPLACE-ME--sns-topic-identifier-for-alarm-notifications" },
+
+  { "ParameterKey": "CertificateArn", "ParameterValue": "REPLACE-ME--prod-only--acm-certificate-in-us-east-1--dev-sets-this-to-an-empty-string" },
+  { "ParameterKey": "HostedZoneId", "ParameterValue": "REPLACE-ME--prod-only--customer-hosted-zone--dev-sets-this-to-an-empty-string" },
+  { "ParameterKey": "DomainName", "ParameterValue": "REPLACE-ME--prod-only--the-alias-hostname--dev-sets-this-to-an-empty-string" }
+]

@@ -1,0 +1,73 @@
+#!/bin/sh
+#
+# NOT THE AWS CLI. NOT FOR PRODUCTION USE.
+#
+# A stand-in that is put on PATH ahead of the real thing by the self-tests in the
+# directory above. It reaches no network, holds no credentials, and knows nothing
+# about AWS beyond the shape of the calls this repository makes.
+#
+# It does two things: it writes every argument list it is handed to a transcript,
+# and it answers with a canned document. That is what lets the deploy scripts be
+# tested for the properties that actually matter — that the identity check
+# happens before anything else, that every call carries the pinned region, that
+# one change-set name is used throughout, that `--parameter-overrides` never
+# appears — without an account, a credential or a deploy.
+#
+# An unrecognised call exits non-zero rather than succeeding quietly. A stub that
+# says yes to everything would let a script grow a call nobody meant it to make
+# and still pass its own test.
+
+set -eu
+
+if [ -z "${FAKE_AWS_TRANSCRIPT:-}" ]; then
+  echo 'fake aws — FAKE_AWS_TRANSCRIPT is not set; refusing to run untranscribed' >&2
+  exit 90
+fi
+
+printf '%s\n' "$*" >> "$FAKE_AWS_TRANSCRIPT"
+
+SERVICE="${1:-}"
+OPERATION="${2:-}"
+
+case "$SERVICE $OPERATION" in
+
+  'sts get-caller-identity')
+    if [ -n "${FAKE_AWS_STS_FAILS:-}" ]; then
+      echo 'fake aws — the identity call was told to fail' >&2
+      exit 255
+    fi
+    printf '%s\n' "${FAKE_AWS_ACCOUNT:-account-under-test}"
+    ;;
+
+  'cloudformation create-change-set')
+    printf '%s\n' '{"Id": "changeset-under-test", "StackId": "stack-under-test"}'
+    ;;
+
+  'cloudformation wait')
+    ;;
+
+  'cloudformation describe-change-set')
+    printf '%s\n' '{"Status": "CREATE_COMPLETE", "Changes": []}'
+    ;;
+
+  'cloudformation execute-change-set')
+    ;;
+
+  'cloudformation describe-stacks')
+    cat "${FAKE_AWS_STACKS:?fake aws — FAKE_AWS_STACKS is not set}"
+    ;;
+
+  'cloudfront get-distribution-config')
+    cat "${FAKE_AWS_DISTRIBUTION:?fake aws — FAKE_AWS_DISTRIBUTION is not set}"
+    ;;
+
+  'cloudwatch describe-alarms')
+    cat "${FAKE_AWS_ALARMS:?fake aws — FAKE_AWS_ALARMS is not set}"
+    ;;
+
+  *)
+    echo "fake aws — no canned answer for: $SERVICE $OPERATION" >&2
+    exit 99
+    ;;
+
+esac

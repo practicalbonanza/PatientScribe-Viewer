@@ -1,0 +1,725 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# The hosting the viewer is served from, as one template with two flavours.
+#
+# Everything here is public. The values that are not — the account, the bucket
+# names, the alarm topic, the API origin the policy names, and the three prod
+# identity values — are parameters, and their values live in a private overlay
+# that is never committed. Names cross the boundary; values do not. That split is
+# the whole reason this file can sit in a public repository beside the viewer it
+# serves, and it is why nothing below is written as a literal that happens to be
+# right for one account.
+#
+# The two flavours are the same stack. `Environment` selects between them, and
+# the only difference is the prod identity: a supplied certificate, the alias it
+# is for, and the DNS records pointing at the distribution. Dev uses the
+# distribution's own domain and CloudFront's own certificate, which is what makes
+# a dev stand-up possible before any domain exists. Nothing about the security
+# posture differs between them, because a posture that is weaker in dev is a
+# posture that was never tested.
+#
+# Region: this stack is pinned to us-east-1 and the tooling passes `--region
+# us-east-1` on every call rather than reading a default from anywhere. CloudFront
+# publishes its metrics into us-east-1 only, so the request-count alarm cannot be
+# anywhere else, and an ACM certificate for a CloudFront alias must be issued
+# there too. A stack that lands in another region is a stack whose alarm silently
+# watches nothing, which is the failure mode worth spending a pin on.
+#
+# What is deliberately absent is as much of the design as what is present. There
+# is no error document, no redirect, no CloudFront function, no Lambda@Edge, no
+# cookie configuration and no second origin. The release check refuses responses
+# this design did not choose, so a setting that makes the distribution serve
+# something other than the origin's own answer is a setting that makes a
+# conforming release impossible. Absences here are load-bearing.
+#
+# Settings not named below take CloudFront's own defaults. None of the defaults
+# is governed by the hardening list, and stating a value for each of them would
+# be stating decisions nobody made.
+
+Description: >-
+  Static hosting for the PatientScribe carer share viewer: a private S3 origin
+  read through CloudFront, the two response-headers policies the hardening list
+  requires, separate access-log and release-log buckets, and a notification-only
+  request-count alarm.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+#
+# Two kinds, and the difference matters more than the order they are written in.
+#
+# The boundary set — AccountId, the three bucket names, the log prefix, the alarm
+# topic, the API origin, and the prod identity trio — carries no default and no
+# example value. Those are supplied from the private overlay at deploy time. A
+# default on one of them would be a value in a public file, which is the one
+# thing the boundary exists to prevent.
+#
+# That holds for the prod trio too, which is why they have no default rather than
+# an empty one: a dev overlay passes them explicitly as empty strings, and their
+# patterns admit that. It reads like ceremony and is not. A parameter with an
+# empty default is a parameter every reader — and every linter — has to resolve
+# to that empty value in the flavour that does not use it, and an alias built
+# from an empty string is a question worth never asking.
+#
+# The public-safe set — the environment flag, the alarm threshold, the log
+# retention — carries real defaults, because there is nothing private about them
+# and a deploy that has to be told all of them is a deploy with more places to
+# get something wrong.
+
+Parameters:
+
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+    Default: dev
+    Description: >-
+      Which flavour to build. `prod` adds the supplied certificate, the alias and
+      the DNS records; `dev` uses the CloudFront domain and certificate.
+
+  ApiOrigin:
+    Type: String
+    AllowedPattern: '^https://[A-Za-z0-9.-]+$'
+    Description: >-
+      The single origin the viewer's own requests may reach, substituted into the
+      policy's connect-src. Scheme and host, nothing else. Boundary value: supply
+      from the overlay.
+
+  AccountId:
+    Type: String
+    AllowedPattern: '^[0-9]{12}$'
+    Description: >-
+      The account this stack is expected to be in. Boundary value: supply from
+      the overlay. It is not decoration — the origin bucket policy requires the
+      reading CloudFront distribution to belong to this account, so a stack built
+      against the wrong overlay produces an origin CloudFront cannot read rather
+      than one it can.
+
+  OriginBucketName:
+    Type: String
+    Description: >-
+      The bucket the viewer's objects are served from. Boundary value: supply
+      from the overlay.
+
+  LogBucketName:
+    Type: String
+    Description: >-
+      The bucket CloudFront writes its access logs to. Boundary value: supply
+      from the overlay.
+
+  ReleaseLogBucketName:
+    Type: String
+    Description: >-
+      The bucket the append-only release log is written to. Never served through
+      the distribution. Boundary value: supply from the overlay.
+
+  LogOpsPrefix:
+    Type: String
+    Description: >-
+      The key prefix inside the release-log bucket that release events are
+      written under. Boundary value: supply from the overlay.
+
+  AlarmTopicArn:
+    Type: String
+    Description: >-
+      The topic the request-count alarm notifies, and the only action it has.
+      Boundary value: supply from the overlay.
+
+  CertificateArn:
+    Type: String
+    AllowedPattern: '^$|^arn:[a-z0-9-]+:acm:us-east-1:[0-9]{12}:certificate/.+$'
+    Description: >-
+      prod only. An ACM certificate in us-east-1 covering the alias. Supplied at
+      the prod gate; this stack never creates one. Boundary value; dev passes an
+      empty string. The pattern pins the region because a certificate issued
+      anywhere else cannot be attached to a distribution.
+
+  HostedZoneId:
+    Type: String
+    AllowedPattern: '^$|^Z[A-Z0-9]+$'
+    Description: >-
+      prod only. The customer hosted zone the alias records are written into.
+      Supplied at the prod gate; this stack never creates one. Boundary value;
+      dev passes an empty string. Not to be confused with the CloudFront
+      alias-target constant below, which is a different thing with the same
+      shaped name and is not this.
+
+  DomainName:
+    Type: String
+    AllowedPattern: '^$|^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
+    Description: >-
+      prod only. The alias the distribution answers on. Boundary value; dev
+      passes an empty string, which the pattern admits. A non-empty value must
+      be a hostname.
+
+  RequestCountAlarmThreshold:
+    Type: Number
+    Default: 10000
+    MinValue: 1
+    Description: >-
+      Requests in a five-minute period above which the alarm notifies. A cost
+      signal, not a control: the viewer front door has no rate cap in this unit,
+      and a flood against a static shell is a cost event rather than a data one.
+
+  AccessLogRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 30
+    Description: >-
+      Days before an access-log object expires. Capped at 30 in the template
+      rather than in a runbook, so the ceiling cannot be raised by a parameter.
+
+Conditions:
+
+  IsProd: !Equals [!Ref Environment, prod]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+
+Resources:
+
+  # The origin. Private, versioned, encrypted, and readable by exactly one
+  # distribution.
+  #
+  # Versioning is on because a release that replaces the entry point needs the
+  # prior bytes to still exist for a rollback to be a switch rather than a
+  # rebuild. It has a cost at the edge: a versioned bucket answers with
+  # `x-amz-version-id`, and an encrypted one answers with
+  # `x-amz-server-side-encryption`. Both are handled in the response-headers
+  # policies below rather than by giving up either property here.
+  #
+  # ACLs are disabled. Object ownership is enforced to the bucket owner, which is
+  # the posture for every bucket in this stack that does not have a specific
+  # reason to be otherwise — and exactly one does.
+  OriginBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref OriginBucketName
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: 'patientscribe:stack'
+          Value: viewer
+
+  # Read access for the distribution and for nothing else.
+  #
+  # The principal is the CloudFront service, and the two conditions are what turn
+  # that from "any CloudFront distribution anywhere" into this one: the source ARN
+  # names this distribution, and the source account names the account the overlay
+  # said this stack was for. The second is the one that fails closed against a
+  # wrong overlay.
+  OriginBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref OriginBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontOriginAccessControlRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: 's3:GetObject'
+            Resource: !Sub '${OriginBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+                'AWS:SourceAccount': !Ref AccountId
+
+  # The access-log bucket.
+  #
+  # This is the one bucket with ACLs enabled, and it is deliberate. CloudFront's
+  # standard (legacy) logging delivers by writing objects into the bucket as the
+  # log-delivery account and taking ownership through a bucket ACL grant, which
+  # it adds itself when the distribution is created or updated. A bucket with
+  # ownership enforced to the owner has no ACL for it to grant into, and log
+  # delivery fails — silently, in the sense that the distribution is fine and the
+  # logs simply never arrive. So object ownership here is ObjectWriter.
+  #
+  # Blocking public access is unaffected by that: the four block settings refuse
+  # public ACLs, and the log-delivery grant is not one.
+  #
+  # Expiry is on every object because the rule carries no prefix filter. Thirty
+  # days is the cap, and the parameter cannot exceed it.
+  AccessLogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref LogBucketName
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: ObjectWriter
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-access-logs
+            Status: Enabled
+            ExpirationInDays: !Ref AccessLogRetentionDays
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: 'patientscribe:stack'
+          Value: viewer
+
+  # The release log.
+  #
+  # A different bucket from the access log, on purpose: they have opposite
+  # retention requirements and opposite trust properties. Access logs are bulk,
+  # uninteresting and expire; the release log is the record of what was published
+  # when, and it is meant to outlive anyone's memory of the release.
+  #
+  # Object Lock is enabled here, at creation. It can be enabled afterwards — an
+  # existing versioned bucket can have it turned on — but it cannot be turned off
+  # again once it is on, and enabling it later means a window in which the record
+  # is ordinary mutable storage plus a retrofit to close that window. Choosing
+  # creation time is choosing to have neither. Versioning is required for the
+  # lock either way; it is the mechanism the lock is built on.
+  #
+  # No default retention rule is set. Retention is applied per object by the
+  # release writer, which is a later round's deliverable: a bucket-wide default
+  # would lock every object that ever lands here to one period chosen now,
+  # including objects written by mistake.
+  #
+  # Nothing serves this bucket. It is not an origin, it has no policy admitting
+  # CloudFront, and the distribution below does not reference it.
+  ReleaseLogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ReleaseLogBucketName
+      ObjectLockEnabled: true
+      ObjectLockConfiguration:
+        ObjectLockEnabled: Enabled
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: 'patientscribe:stack'
+          Value: viewer
+
+  # How the distribution proves to the bucket that it is itself.
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-origin'
+        Description: Signs the distribution's reads of the private origin bucket.
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # The cache policy for /assets/*.
+  #
+  # The objects under that prefix are named by the digest of their own bytes, so
+  # a given path's content cannot change; the edge is allowed to hold them for a
+  # year. What it is not allowed to do is treat two requests for the same path as
+  # different, which is what the cache key says: no query string, no cookies, no
+  # headers. A query-carrying request for an asset is answered from the one entry
+  # the path has.
+  #
+  # Compression normalisation is the single exception, and it is an exception the
+  # design names: the key varies by accepted encoding so a client that cannot take
+  # brotli is not served brotli. The check that reads these responses decodes the
+  # body before hashing it, so an encoded response is still the object it claims
+  # to be.
+  #
+  # Minimum and default TTL are zero and the maximum is a year, which is not a
+  # cache duration but a ceiling: the object's own directive decides, within it.
+  AssetCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub '${AWS::StackName}-assets'
+        Comment: Honours the object's own cache directive for digest-named assets.
+        MinTTL: 0
+        DefaultTTL: 0
+        MaxTTL: 31536000
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  # ---------------------------------------------------------------------------
+  # The two response-headers policies
+  # ---------------------------------------------------------------------------
+  #
+  # These two resources are the same policy twice, differing in exactly one field:
+  # whether the cache directive overrides what the origin said. Everything else —
+  # every header name, every header value, every other override flag, and the
+  # removal list — is identical, and that identity is a requirement rather than a
+  # coincidence. `scripts/infra/check-headers-policies.mjs` reads this file and
+  # asserts it, because two blocks that must stay equal while being written twice
+  # are two blocks that will eventually differ by a character nobody sees.
+  #
+  # Every governed value is written as a literal, character for character as the
+  # release check's frozen `headers.mjs` spells it. None of them is assembled from
+  # parts by CloudFront: the typed security-headers configuration would build the
+  # transport-security value out of a number and two flags, and the exact string
+  # it produces is CloudFront's spelling rather than this design's. A value that
+  # has to match to the character is a value written out, in one place, where it
+  # can be compared. That is why all six are custom headers and the typed
+  # security-headers configuration is not used at all — mixing the two would also
+  # mean the same header could be named in both places, which CloudFront refuses.
+  #
+  # The one substituted slot is the policy's connect-src, which is the API origin
+  # and differs per environment. It is a parameter, not a literal, and it is the
+  # only part of the policy string that is not written out here.
+  #
+  # The removal list is the other half of making a conforming response possible.
+  # The origin bucket is versioned and encrypted, so S3 answers a successful read
+  # with `x-amz-version-id` and `x-amz-server-side-encryption`, and CloudFront
+  # passes both through. The release check admits neither: beyond its named list,
+  # only the `x-amz-cf-` prefix survives, and a header outside the list refuses the
+  # run. Without these two removals every successful object fails the check — not
+  # the interesting objects, all of them. The removals are inside the equality the
+  # checker asserts, so they cannot drift apart either.
+
+  DefaultResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${AWS::StackName}-default'
+        Comment: Governed headers for every path outside /assets/; no-store overrides the origin.
+        CustomHeadersConfig:
+          Items:
+            - Header: content-security-policy
+              Value: !Sub "default-src 'none'; script-src 'self'; style-src 'self'; connect-src ${ApiOrigin}; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'"
+              Override: true
+            - Header: permissions-policy
+              Value: 'camera=(), microphone=(), geolocation=()'
+              Override: true
+            - Header: strict-transport-security
+              Value: 'max-age=63072000; includeSubDomains; preload'
+              Override: true
+            - Header: referrer-policy
+              Value: 'no-referrer'
+              Override: true
+            - Header: x-robots-tag
+              Value: 'noindex, noarchive, nosnippet'
+              Override: true
+            # The one field the two policies differ in. Here the directive is the
+            # answer: nothing outside /assets/ is storable, whatever the origin
+            # said about it.
+            - Header: cache-control
+              Value: 'no-store'
+              Override: true
+        RemoveHeadersConfig:
+          Items:
+            - Header: x-amz-version-id
+            - Header: x-amz-server-side-encryption
+
+  AssetResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${AWS::StackName}-assets'
+        Comment: Governed headers for /assets/*; no-store is the fallback the object's own directive wins over.
+        CustomHeadersConfig:
+          Items:
+            - Header: content-security-policy
+              Value: !Sub "default-src 'none'; script-src 'self'; style-src 'self'; connect-src ${ApiOrigin}; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'"
+              Override: true
+            - Header: permissions-policy
+              Value: 'camera=(), microphone=(), geolocation=()'
+              Override: true
+            - Header: strict-transport-security
+              Value: 'max-age=63072000; includeSubDomains; preload'
+              Override: true
+            - Header: referrer-policy
+              Value: 'no-referrer'
+              Override: true
+            - Header: x-robots-tag
+              Value: 'noindex, noarchive, nosnippet'
+              Override: true
+            # The differing field, the other way round. An asset carries its own
+            # immutable directive as object metadata and that directive wins;
+            # anything answered here without one — an error, anything not an
+            # object — falls back to this value and is not storable.
+            - Header: cache-control
+              Value: 'no-store'
+              Override: false
+        RemoveHeadersConfig:
+          Items:
+            - Header: x-amz-version-id
+            - Header: x-amz-server-side-encryption
+
+  # ---------------------------------------------------------------------------
+  # The distribution
+  # ---------------------------------------------------------------------------
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'PatientScribe carer share viewer (${Environment})'
+
+        # The entry point, and the only document this origin has.
+        DefaultRootObject: index.html
+
+        # IPv6 is on in both flavours, and it is not a preference. The prod
+        # flavour writes an AAAA alias record at this distribution; an AAAA
+        # record pointing at a distribution that has no IPv6 addresses resolves
+        # to nothing at all for a client that asks for one. Stating it in both
+        # keeps dev the same shape as the thing prod will be.
+        IPV6Enabled: true
+
+        Aliases: !If
+          - IsProd
+          - [!Ref DomainName]
+          - !Ref 'AWS::NoValue'
+
+        ViewerCertificate: !If
+          - IsProd
+          # Supplied, never created here. The protocol floor and the SNI method
+          # are stated because CloudFront requires both whenever a certificate is
+          # supplied — neither is a choice being made in this file.
+          - AcmCertificateArn: !Ref CertificateArn
+            MinimumProtocolVersion: TLSv1.2_2021
+            SslSupportMethod: sni-only
+          - CloudFrontDefaultCertificate: true
+
+        Origins:
+          - Id: viewer-origin
+            DomainName: !GetAtt OriginBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+            # Required beside an access control, and empty: the empty string is
+            # how this says "no legacy origin access identity", which is a
+            # different mechanism from the one above.
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+
+        # Two behaviours, which is the whole routing table.
+        #
+        # There is no third, no ordered list to reason about, and no pattern that
+        # could match something neither of these was written for.
+        DefaultCacheBehavior:
+          TargetOriginId: viewer-origin
+          # https-only, not redirect-to-https. A redirect is a response this
+          # design does not serve, and the check refuses one; a plaintext request
+          # is refused outright instead of being answered with a Location.
+          ViewerProtocolPolicy: https-only
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # The managed CachingDisabled policy, by its fixed public identifier.
+          # Minimum, default and maximum TTL are all zero: nothing outside
+          # /assets/ is held at the edge at all.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          ResponseHeadersPolicyId: !Ref DefaultResponseHeadersPolicy
+
+        CacheBehaviors:
+          - PathPattern: '/assets/*'
+            TargetOriginId: viewer-origin
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: !Ref AssetCachePolicy
+            ResponseHeadersPolicyId: !Ref AssetResponseHeadersPolicy
+
+        # Every status CloudFront will let this distribution say something about,
+        # and what it says about each of them is nothing.
+        #
+        # There is no ResponsePagePath and no ResponseCode on any of these, which
+        # is what makes them pass-through: the status and body the origin produced
+        # are what the browser gets. An error document would be a document this
+        # origin does not have, served under a status that is not the one that
+        # happened.
+        #
+        # The caching minimum is zero on every one of them, because an error that
+        # is cached is an error that outlives its cause. Zero is not quite zero in
+        # practice — a distribution in front of an S3 origin holds an error for
+        # about a second regardless — and that floor is accepted: it is bounded,
+        # it is the platform's, and no setting here removes it.
+        CustomErrorResponses:
+          - ErrorCode: 400
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 403
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 405
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 414
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 416
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 500
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 501
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 502
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 503
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 504
+            ErrorCachingMinTTL: 0
+
+        Logging:
+          Bucket: !GetAtt AccessLogBucket.DomainName
+          # No cookie reaches this origin and none is set by it, so there is
+          # nothing here to include; saying so explicitly means a later reader
+          # does not have to work out what the default was.
+          IncludeCookies: false
+
+      Tags:
+        - Key: 'patientscribe:stack'
+          Value: viewer
+
+  # The request-count alarm.
+  #
+  # Notification only. Its action list is the supplied topic and nothing else —
+  # no OK action, no insufficient-data action, and nothing that could disable,
+  # scale or otherwise touch the distribution. The containment for a flood is a
+  # person reading the notification and disabling the distribution by hand, which
+  # is a decision this stack is not equipped to make on its own.
+  #
+  # The metric is CloudFront's, which is published in us-east-1 with a Region
+  # dimension whose value is the literal string Global. Both dimensions are
+  # required: the metric does not exist under the distribution alone.
+  #
+  # Missing data is not breaching, because a distribution nobody is using
+  # publishes nothing and an alarm that fires on quiet is an alarm that gets muted.
+  RequestCountAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-requests'
+      AlarmDescription: >-
+        Request volume through the viewer distribution over a five-minute period.
+        A cost signal; notification only.
+      Namespace: AWS/CloudFront
+      MetricName: Requests
+      Dimensions:
+        - Name: DistributionId
+          Value: !Ref Distribution
+        - Name: Region
+          Value: Global
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: !Ref RequestCountAlarmThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopicArn
+      Tags:
+        - Key: 'patientscribe:stack'
+          Value: viewer
+
+  # ---------------------------------------------------------------------------
+  # prod identity
+  # ---------------------------------------------------------------------------
+  #
+  # Two records, not one. A browser that asks for an IPv6 address and gets no
+  # answer does not fall back to asking for an IPv4 one in every case, so an
+  # alias with only an A record is an alias that works for most people.
+  #
+  # The alias target's hosted-zone identifier is the constant every CloudFront
+  # distribution shares. It is not this distribution's zone, it is not the
+  # customer zone in HostedZoneId, and it is not discoverable from the stack —
+  # it is a fixed published value, written here because a template built with no
+  # access to AWS cannot look it up.
+  AliasRecordA:
+    Type: AWS::Route53::RecordSet
+    Condition: IsProd
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+
+  AliasRecordAAAA:
+    Type: AWS::Route53::RecordSet
+    Condition: IsProd
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+        EvaluateTargetHealth: false
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+#
+# What the deploy gate's control-plane assertions read, and what the release
+# tooling needs to find its way around. The distribution's own domain is here
+# because the dev origin string does not exist until this stack has been built
+# once, and capturing it is the point of the dev stand-up.
+
+Outputs:
+
+  DistributionId:
+    Description: The distribution, for the control-plane assertions and for invalidations.
+    Value: !Ref Distribution
+
+  DistributionDomainName:
+    Description: The distribution's own domain. In dev this is the viewer origin.
+    Value: !GetAtt Distribution.DomainName
+
+  OriginBucket:
+    Description: The bucket a release uploads into.
+    Value: !Ref OriginBucket
+
+  ReleaseLogBucket:
+    Description: The bucket the release log is written to. Not served.
+    Value: !Ref ReleaseLogBucket
+
+  ReleaseLogPrefix:
+    Description: >-
+      The prefix release events are written under. One immutable object per
+      event, keyed by release identifier and timestamp; retention is set on the
+      object by the writer, never by a bucket default.
+    Value: !Ref LogOpsPrefix
+
+  DefaultResponseHeadersPolicyId:
+    Description: The policy the default behaviour must be carrying.
+    Value: !Ref DefaultResponseHeadersPolicy
+
+  AssetResponseHeadersPolicyId:
+    Description: The policy the /assets/* behaviour must be carrying.
+    Value: !Ref AssetResponseHeadersPolicy
+
+  RequestCountAlarmName:
+    Description: The alarm the control-plane assertions read back.
+    Value: !Ref RequestCountAlarm
