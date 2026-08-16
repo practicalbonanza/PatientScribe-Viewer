@@ -65,6 +65,109 @@ case "$SERVICE $OPERATION" in
     cat "${FAKE_AWS_ALARMS:?fake aws — FAKE_AWS_ALARMS is not set}"
     ;;
 
+  # -------------------------------------------------------------------------
+  # The operations the release state machine and the drill driver make.
+  # -------------------------------------------------------------------------
+  #
+  # Added without touching an arm above: the deploy self-tests that already exist
+  # go on driving exactly what they drove, and their transcripts are the proof.
+  #
+  # Two of these arms do more than answer, and both are steering rather than
+  # simulation. A put may be mirrored into a directory, which is what lets the
+  # drill's mangle and restore be visible to a real local origin serving that
+  # directory — the drill is only a rehearsal if something can actually go red. A
+  # put may also be told to fail by key, which is how the seeded failure
+  # directions are reached without breaking anything.
+
+  's3api put-object')
+    PUT_BUCKET=''
+    PUT_KEY=''
+    PUT_BODY=''
+    PUT_PREVIOUS=''
+    for PUT_ARG in "$@"; do
+      case "$PUT_PREVIOUS" in
+        --bucket) PUT_BUCKET="$PUT_ARG" ;;
+        --key) PUT_KEY="$PUT_ARG" ;;
+        --body) PUT_BODY="$PUT_ARG" ;;
+      esac
+      PUT_PREVIOUS="$PUT_ARG"
+    done
+
+    if [ -n "${FAKE_AWS_PUT_FAILS:-}" ]; then
+      case "$PUT_KEY" in
+        *"$FAKE_AWS_PUT_FAILS"*)
+          echo "fake aws — the put of ${PUT_KEY} was told to fail" >&2
+          exit 254
+          ;;
+      esac
+    fi
+
+    if [ -n "${FAKE_AWS_S3_ROOT:-}" ] && [ "$PUT_BUCKET" = "${FAKE_AWS_S3_BUCKET:-}" ] && [ -n "$PUT_KEY" ] && [ -n "$PUT_BODY" ]; then
+      mkdir -p "${FAKE_AWS_S3_ROOT}/$(dirname "$PUT_KEY")"
+      cp "$PUT_BODY" "${FAKE_AWS_S3_ROOT}/${PUT_KEY}"
+    fi
+
+    printf '%s\n' '{"ETag": "\"etag-under-test\""}'
+    ;;
+
+  's3api get-object')
+    if [ -n "${FAKE_AWS_GET_OBJECT_FAILS:-}" ]; then
+      echo 'fake aws — the get-object call was told to fail' >&2
+      exit 254
+    fi
+    GET_OUTFILE=''
+    GET_STATE=''
+    for GET_ARG in "$@"; do
+      case "$GET_STATE" in
+        key)
+          GET_STATE='outfile'
+          continue
+          ;;
+        outfile)
+          GET_OUTFILE="$GET_ARG"
+          GET_STATE=''
+          continue
+          ;;
+      esac
+      case "$GET_ARG" in
+        --key) GET_STATE='key' ;;
+      esac
+    done
+    if [ -z "$GET_OUTFILE" ]; then
+      echo 'fake aws — get-object was given no outfile to write' >&2
+      exit 98
+    fi
+    cp "${FAKE_AWS_GET_OBJECT_BODY:?fake aws — FAKE_AWS_GET_OBJECT_BODY is not set}" "$GET_OUTFILE"
+    printf '%s\n' '{"ContentType": "text/html; charset=utf-8"}'
+    ;;
+
+  's3api list-objects-v2')
+    cat "${FAKE_AWS_LISTING:?fake aws — FAKE_AWS_LISTING is not set}"
+    ;;
+
+  'cloudfront create-invalidation')
+    printf '{"Invalidation": {"Id": "%s", "Status": "InProgress"}}\n' "${FAKE_AWS_INVALIDATION_ID:-INVALIDATION-UNDER-TEST}"
+    ;;
+
+  'cloudfront get-invalidation')
+    INVALIDATION_STATUS='Completed'
+    if [ -n "${FAKE_AWS_INVALIDATION_STATUSES:-}" ]; then
+      STATUS_CURSOR="${FAKE_AWS_INVALIDATION_STATUSES}.cursor"
+      STATUS_AT=1
+      if [ -f "$STATUS_CURSOR" ]; then
+        STATUS_AT=$(cat "$STATUS_CURSOR")
+      fi
+      STATUS_LINE=$(sed -n "${STATUS_AT}p" "$FAKE_AWS_INVALIDATION_STATUSES")
+      if [ -n "$STATUS_LINE" ]; then
+        INVALIDATION_STATUS="$STATUS_LINE"
+      else
+        INVALIDATION_STATUS=$(tail -1 "$FAKE_AWS_INVALIDATION_STATUSES")
+      fi
+      echo $((STATUS_AT + 1)) > "$STATUS_CURSOR"
+    fi
+    printf '{"Invalidation": {"Id": "%s", "Status": "%s"}}\n' "${FAKE_AWS_INVALIDATION_ID:-INVALIDATION-UNDER-TEST}" "$INVALIDATION_STATUS"
+    ;;
+
   *)
     echo "fake aws — no canned answer for: $SERVICE $OPERATION" >&2
     exit 99

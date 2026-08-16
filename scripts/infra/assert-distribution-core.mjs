@@ -436,6 +436,10 @@ function conformingDocuments() {
           { OutputKey: 'DefaultResponseHeadersPolicyId', OutputValue: 'policy-default' },
           { OutputKey: 'AssetResponseHeadersPolicyId', OutputValue: 'policy-assets' },
           { OutputKey: 'RequestCountAlarmName', OutputValue: 'patientscribe-viewer-dev-requests' },
+          // The threshold the stack states it was deployed with. The fetching
+          // half reads the expectation from here rather than from a local file,
+          // so a conforming document carries it.
+          { OutputKey: 'RequestCountAlarmThreshold', OutputValue: '10000' },
         ],
       },
     ],

@@ -84,5 +84,37 @@ jobs:
       - name: Run all checks
         run: npm run check
 
+      # The hosting checks, each invoked by its path. They are here for the same
+      # reason the step above is: a check reached only through a name in
+      # package.json is a check that one edit to package.json can silence.
+      #
+      # No secrets, no AWS, no sam. Everything below reads files, writes into a
+      # temporary directory, or talks to a loopback server it started itself. The
+      # template lint rides locally and at the change-set gate, where a person is
+      # already present to read the diff.
+      - name: Check the two response-headers policies against each other
+        run: node scripts/infra/check-headers-policies.mjs
+
+      - name: Check that no private value appears in a public file
+        run: node scripts/infra/scan-private-values.mjs
+
+      - name: Check the account assertion
+        run: sh scripts/infra/selftest/assert-account.selftest.sh
+
+      - name: Check the change-set deploy
+        run: sh scripts/infra/selftest/deploy-changeset.selftest.sh
+
+      - name: Check the control-plane assertions
+        run: sh scripts/infra/selftest/assert-distribution.selftest.sh
+
+      - name: Check the release build
+        run: sh scripts/infra/selftest/build-release.selftest.sh
+
+      - name: Check the switch driver
+        run: sh scripts/infra/selftest/release.selftest.sh
+
+      - name: Check the drill driver
+        run: sh scripts/infra/selftest/drill.selftest.sh
+
       - name: Check the history for attribution
         run: node scripts/check-attribution.mjs

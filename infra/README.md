@@ -128,3 +128,11 @@ Not everything about this stack is provable from the stack.
   supplied to this stack, never created by it, and no prod value exists in this repository.
 - **The distribution actually having been built the way this file says** — `assert-distribution.sh`,
   at the deploy gate, reading the control plane back.
+
+## Putting a release on it
+
+This document is about the hosting. What a release is, how one is built and published, what the
+switch does step by step and what a rollback is, how the drill breaks the origin on purpose and puts
+it back, and which actions the two drivers need and no more — all of that is `RELEASING.md` at the
+repository root. The tooling lives in `scripts/infra/` beside the deploy scripts and is disarmed the
+same way, with its own gate variables.

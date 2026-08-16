@@ -15,3 +15,5 @@ playwright/.cache/
 # their values are not, and this is where they land. Copy
 # infra/parameters.json.example, fill it in, and it stays here.
 infra/parameters.json
+
+release-build/

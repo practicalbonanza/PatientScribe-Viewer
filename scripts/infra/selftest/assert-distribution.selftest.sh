@@ -58,7 +58,8 @@ cat > "$WORK/stacks.json" <<'JSON'
         { "OutputKey": "DistributionId", "OutputValue": "EXAMPLEDISTID" },
         { "OutputKey": "DefaultResponseHeadersPolicyId", "OutputValue": "policy-default" },
         { "OutputKey": "AssetResponseHeadersPolicyId", "OutputValue": "policy-assets" },
-        { "OutputKey": "RequestCountAlarmName", "OutputValue": "patientscribe-viewer-dev-requests" }
+        { "OutputKey": "RequestCountAlarmName", "OutputValue": "patientscribe-viewer-dev-requests" },
+        { "OutputKey": "RequestCountAlarmThreshold", "OutputValue": "10000" }
       ]
     }
   ]
@@ -195,16 +196,34 @@ else
   record ok 'a run with no expectation costs no aws argv'
 fi
 
+# ---------------------------------------------------------------------------
+# The threshold comes from the stack, so a stack that states none refuses.
+# ---------------------------------------------------------------------------
+#
+# This is where the expectation moved to. A threshold read from a local file is a
+# threshold that can drift from the one the stack was deployed with, and the two
+# disagreeing is the case the assertion exists to catch — so the value is read
+# from the stack's own output, and a stack that carries no such output is a run
+# that cannot conclude anything rather than a run that checks less.
+sed '/RequestCountAlarmThreshold/d; s/"patientscribe-viewer-dev-requests" },/"patientscribe-viewer-dev-requests" }/' \
+  "$WORK/stacks.json" > "$WORK/stacks-no-threshold.json"
+
+FAKE_AWS_STACKS="$WORK/stacks-no-threshold.json"
+export FAKE_AWS_STACKS
+
 : > "$FAKE_AWS_TRANSCRIPT"
 STATUS=0
 sh "$SCRIPT" patientscribe-viewer-dev --overlay "$WORK/absent.json" \
   --expected-alarm-action topic-under-test > "$WORK/out.txt" 2>&1 || STATUS=$?
 
 if [ "$STATUS" -eq 2 ] && grep -q 'RequestCountAlarmThreshold' "$WORK/out.txt"; then
-  record ok 'a topic without a threshold is still a refusal'
+  record ok 'a stack that states no threshold is a refusal, named as one'
 else
-  record fail 'a topic without a threshold is still a refusal' "exit ${STATUS}: $(cat "$WORK/out.txt")"
+  record fail 'a stack that states no threshold is a refusal, named as one' "exit ${STATUS}: $(cat "$WORK/out.txt")"
 fi
+
+FAKE_AWS_STACKS="$WORK/stacks.json"
+export FAKE_AWS_STACKS
 
 # ---------------------------------------------------------------------------
 # An expectation that does not match what the alarm notifies.

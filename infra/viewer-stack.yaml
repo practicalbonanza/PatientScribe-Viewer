@@ -723,3 +723,10 @@ Outputs:
   RequestCountAlarmName:
     Description: The alarm the control-plane assertions read back.
     Value: !Ref RequestCountAlarm
+
+  RequestCountAlarmThreshold:
+    Description: >-
+      The threshold this stack was deployed with, so the control-plane
+      assertion compares the live alarm against what the stack itself states
+      rather than against a local file that can drift.
+    Value: !Ref RequestCountAlarmThreshold
