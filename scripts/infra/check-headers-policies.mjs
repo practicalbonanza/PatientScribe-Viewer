@@ -18,6 +18,14 @@
  * being maintained separately will eventually differ by one character, and the
  * character it differs by will be in a security header.
  *
+ * The governed headers live in two blocks rather than one, and not by choice:
+ * CloudFront's API refuses `content-security-policy`, `strict-transport-security`
+ * and `referrer-policy` as custom headers, because each has a slot of its own in
+ * the typed security-headers configuration. So three of them are written there
+ * and three stay custom, and both blocks are inside the equality above. The three
+ * that moved must also not reappear as custom headers, which is a refusal here
+ * because it is otherwise a refusal nothing sees until a change-set is executed.
+ *
  * It also checks the values themselves, against the strings the release check
  * refuses anything else for. Those strings are read out of the frozen core as
  * text — this file does not import that module and does not execute it, because
@@ -25,11 +33,19 @@
  * weakest coupling that still catches the thing worth catching, which is a
  * transcription error in the template.
  *
+ * One of those values is not written in the template at all. CloudFront composes
+ * the transport-security string out of a number and two flags, so the template
+ * carries the three fields and the wire carries the string. The composition is
+ * done here the way CloudFront does it and compared against the frozen spelling,
+ * which is the most this file can say about it; the bytes themselves are judged
+ * on the wire by the release check.
+ *
  * The template is read with a line scanner rather than a YAML parser, because
  * this repository has no YAML parser and is not gaining a dependency for one. The
  * scanner is written to fail closed: if it cannot find both policies, both
- * custom-header blocks and both removal blocks in the shape it expects, it says
- * so and exits 2 rather than comparing two empty lists and calling them equal.
+ * custom-header blocks, both security-headers blocks and both removal blocks in
+ * the shape it expects, it says so and exits 2 rather than comparing two empty
+ * lists and calling them equal.
  */
 
 import { readFileSync } from 'node:fs';
@@ -72,6 +88,51 @@ const GOVERNED = Object.freeze({
 });
 
 /**
+ * The governed headers that are carried as custom headers.
+ *
+ * @type {readonly string[]}
+ */
+const CUSTOM_CARRIED = Object.freeze(['permissions-policy', 'x-robots-tag', 'cache-control']);
+
+/**
+ * The governed headers that cannot be custom headers.
+ *
+ * Each of these has a dedicated field in the typed security-headers
+ * configuration, and CloudFront refuses to accept a header with a dedicated
+ * field as a custom one. The refusal is the API's and is not in the template
+ * language: a template naming one of these in `CustomHeadersConfig` renders,
+ * validates and produces a change-set like any other, and the execute is where
+ * it fails. That is late enough to be worth a line here.
+ *
+ * @type {readonly string[]}
+ */
+const MOVED = Object.freeze(['content-security-policy', 'strict-transport-security', 'referrer-policy']);
+
+/**
+ * The typed security-headers configuration, flattened to the keys the scanner
+ * produces, with the value each one must carry.
+ *
+ * The policy string is not in here — it has a parameter in it and is read
+ * directive by directive below — and neither is anything else, which is the
+ * point: a key in either block that is not the policy string and not named here
+ * is a field this check has never read, and it refuses rather than ignores it.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+const SECURITY_FIELDS = Object.freeze({
+  'ContentSecurityPolicy.Override': 'true',
+  'StrictTransportSecurity.AccessControlMaxAgeSec': '63072000',
+  'StrictTransportSecurity.IncludeSubdomains': 'true',
+  'StrictTransportSecurity.Preload': 'true',
+  'StrictTransportSecurity.Override': 'true',
+  'ReferrerPolicy.ReferrerPolicy': 'no-referrer',
+  'ReferrerPolicy.Override': 'true',
+});
+
+/** The one field in that block whose value is not a literal. */
+const CSP_FIELD = 'ContentSecurityPolicy.ContentSecurityPolicy';
+
+/**
  * The policy's directives, in order, with the origin left open.
  *
  * @type {readonly string[]}
@@ -97,6 +158,24 @@ const CSP_DIRECTIVES = Object.freeze([
 const REMOVED = Object.freeze(['x-amz-version-id', 'x-amz-server-side-encryption']);
 
 /**
+ * The refusals that mean the template could not be read, as against read and
+ * found wanting.
+ *
+ * A check that cannot see what it is checking has not checked it, and reporting
+ * that with the exit code a disagreement uses invites the two to be read as one
+ * thing. These three exit 2. They are named here rather than matched on their
+ * wording downstream so that the refusal and its exit code are the same string
+ * in both places and cannot drift; the self-test pins the wording from the other
+ * side, by mutating the template until each one fires.
+ */
+const UNREADABLE = Object.freeze({
+  policies: 'the template does not carry both response-headers policies in the shape this reads',
+  custom: 'one of the policies carries no custom headers, which is not a policy this check can read',
+  security:
+    'one of the policies does not carry a security-headers configuration, and three of the governed headers can live nowhere else',
+});
+
+/**
  * @typedef {object} HeaderItem
  * @property {string} header
  * @property {string} value
@@ -107,6 +186,8 @@ const REMOVED = Object.freeze(['x-amz-version-id', 'x-amz-server-side-encryption
  * @typedef {object} Policy
  * @property {HeaderItem[]} items
  * @property {string[]} removed
+ * @property {Map<string, string>} security The security-headers block, flattened
+ *   to `Block.Field` keys so that two of them can be compared as one thing.
  */
 
 /**
@@ -115,8 +196,10 @@ const REMOVED = Object.freeze(['x-amz-version-id', 'x-amz-server-side-encryption
  * The scanner keys off indentation, which is what makes it a scanner rather than
  * a set of hopeful regular expressions: a resource block is everything indented
  * past the resource's own name, and an item is a `- Header:` line plus the lines
- * indented under it. Anything it cannot read in that shape is an error rather
- * than an empty result.
+ * indented under it. The security-headers block is read the same way, one level
+ * deeper: a key with nothing after it opens a block, and a key with a value in it
+ * belongs to whichever block is open. Anything it cannot read in that shape is an
+ * error rather than an empty result.
  *
  * @param {string} text
  * @returns {Map<string, Policy>}
@@ -129,10 +212,12 @@ export function readPolicies(text) {
 
   /** @type {string | null} */
   let current = null;
-  /** @type {'none' | 'custom' | 'remove'} */
+  /** @type {'none' | 'security' | 'custom' | 'remove'} */
   let section = 'none';
   /** @type {HeaderItem | null} */
   let item = null;
+  /** @type {string | null} */
+  let block = null;
 
   /** @type {Policy | undefined} */
   let policy;
@@ -152,8 +237,9 @@ export function readPolicies(text) {
       }
       current = name === DEFAULT_POLICY || name === ASSET_POLICY ? name : null;
       section = 'none';
+      block = null;
       if (current !== null) {
-        policy = { items: [], removed: [] };
+        policy = { items: [], removed: [], security: new Map() };
         policies.set(current, policy);
       } else {
         policy = undefined;
@@ -165,12 +251,22 @@ export function readPolicies(text) {
       continue;
     }
 
+    if (/^\s*SecurityHeadersConfig:\s*$/.test(line)) {
+      if (item !== null) {
+        policy.items.push(item);
+        item = null;
+      }
+      section = 'security';
+      block = null;
+      continue;
+    }
     if (/^\s*CustomHeadersConfig:\s*$/.test(line)) {
       if (item !== null) {
         policy.items.push(item);
         item = null;
       }
       section = 'custom';
+      block = null;
       continue;
     }
     if (/^\s*RemoveHeadersConfig:\s*$/.test(line)) {
@@ -179,6 +275,20 @@ export function readPolicies(text) {
         item = null;
       }
       section = 'remove';
+      block = null;
+      continue;
+    }
+
+    if (section === 'security') {
+      const opener = /^\s*([A-Za-z]+):\s*$/.exec(line);
+      if (opener !== null) {
+        block = opener[1] ?? '';
+        continue;
+      }
+      const field = /^\s*([A-Za-z]+):\s*(.+)$/.exec(line);
+      if (field !== null && block !== null) {
+        policy.security.set(`${block}.${field[1] ?? ''}`, unquote(field[2] ?? ''));
+      }
       continue;
     }
 
@@ -262,16 +372,24 @@ export function checkTemplate(templateText, frozenText) {
   const refusals = [];
 
   const policies = readPolicies(templateText);
-  const fallback = { items: /** @type {HeaderItem[]} */ ([]), removed: /** @type {string[]} */ ([]) };
+  const fallback = {
+    items: /** @type {HeaderItem[]} */ ([]),
+    removed: /** @type {string[]} */ ([]),
+    security: /** @type {Map<string, string>} */ (new Map()),
+  };
   const defaultPolicy = policies.get(DEFAULT_POLICY) ?? fallback;
   const assetPolicy = policies.get(ASSET_POLICY) ?? fallback;
 
   if (!policies.has(DEFAULT_POLICY) || !policies.has(ASSET_POLICY)) {
-    refusals.push('the template does not carry both response-headers policies in the shape this reads');
+    refusals.push(UNREADABLE.policies);
     return refusals;
   }
   if (defaultPolicy.items.length === 0 || assetPolicy.items.length === 0) {
-    refusals.push('one of the policies carries no custom headers, which is not a policy this check can read');
+    refusals.push(UNREADABLE.custom);
+    return refusals;
+  }
+  if (defaultPolicy.security.size === 0 || assetPolicy.security.size === 0) {
+    refusals.push(UNREADABLE.security);
     return refusals;
   }
 
@@ -327,8 +445,22 @@ export function checkTemplate(templateText, frozenText) {
     }
   }
 
-  // 2. The values themselves.
+  const securityKeys = [...new Set([...defaultPolicy.security.keys(), ...assetPolicy.security.keys()])].sort();
+  for (const key of securityKeys) {
+    const left = defaultPolicy.security.get(key);
+    const right = assetPolicy.security.get(key);
+    if (left !== right) {
+      refusals.push(
+        `${key} is ${JSON.stringify(left ?? null)} in the default policy and ${JSON.stringify(right ?? null)} in the asset policy, and nothing in the security-headers configuration may differ`,
+      );
+    }
+  }
+
+  // 2. The values themselves, in whichever block carries them.
   for (const [name, expected] of Object.entries(GOVERNED)) {
+    if (!CUSTOM_CARRIED.includes(name)) {
+      continue;
+    }
     const item = defaultByName.get(name);
     if (item === undefined) {
       refusals.push(`${name} is not carried at all`);
@@ -342,11 +474,67 @@ export function checkTemplate(templateText, frozenText) {
     }
   }
 
-  const policy = defaultByName.get('content-security-policy');
+  for (const name of MOVED) {
+    for (const [label, byName] of /** @type {[string, Map<string, HeaderItem>][]} */ ([
+      ['default', defaultByName],
+      ['asset', assetByName],
+    ])) {
+      if (byName.has(name)) {
+        refusals.push(
+          `${name} is a custom header on the ${label} policy, and CloudFront refuses it as one — it has a field of its own and belongs in it`,
+        );
+      }
+    }
+  }
+
+  const security = defaultPolicy.security;
+
+  for (const [key, expected] of Object.entries(SECURITY_FIELDS)) {
+    const actual = security.get(key);
+    if (actual === undefined) {
+      refusals.push(`${key} is not carried, and the security-headers configuration is read field by field`);
+      continue;
+    }
+    if (actual !== expected) {
+      refusals.push(`${key} is ${JSON.stringify(actual)}, and it must be ${JSON.stringify(expected)}`);
+    }
+  }
+
+  for (const key of security.keys()) {
+    if (key !== CSP_FIELD && SECURITY_FIELDS[key] === undefined) {
+      refusals.push(`${key} is a field this check has never read, and an unread field in a security header is an unchecked one`);
+    }
+  }
+
+  // The transport-security value is the one governed string the template does not
+  // contain: CloudFront builds it from the three fields above. It is built here
+  // the same way and compared against the settled spelling, which is as close to
+  // the wire as this file gets — the bytes themselves are the release check's.
+  /** @type {string[]} */
+  const composed = [];
+  const seconds = security.get('StrictTransportSecurity.AccessControlMaxAgeSec');
+  if (seconds !== undefined) {
+    composed.push(`max-age=${seconds}`);
+  }
+  if (security.get('StrictTransportSecurity.IncludeSubdomains') === 'true') {
+    composed.push('includeSubDomains');
+  }
+  if (security.get('StrictTransportSecurity.Preload') === 'true') {
+    composed.push('preload');
+  }
+  const transport = composed.join('; ');
+  const settledTransport = GOVERNED['strict-transport-security'] ?? '';
+  if (transport !== settledTransport) {
+    refusals.push(
+      `the transport-security fields compose to ${JSON.stringify(transport)}, and the settled spelling is ${JSON.stringify(settledTransport)}`,
+    );
+  }
+
+  const policy = security.get(CSP_FIELD);
   if (policy === undefined) {
     refusals.push('no content-security-policy is carried');
   } else {
-    const directives = policy.value.split('; ');
+    const directives = policy.split('; ');
     if (directives.length !== CSP_DIRECTIVES.length) {
       refusals.push(`the policy has ${directives.length} directives, and it must have ${CSP_DIRECTIVES.length}`);
     }
@@ -440,14 +628,47 @@ function selfTest() {
   const cases = [
     {
       name: 'a header value drifts in one policy only',
-      mutate: (text) => text.replace("Value: 'no-referrer'", "Value: 'strict-origin'"),
+      mutate: (text) => text.replace("Value: 'noindex, noarchive, nosnippet'", "Value: 'noindex'"),
       expect: 'differs between the two policies',
     },
     {
-      name: 'the transport-security value loses a directive',
+      name: 'a security header drifts in one policy only',
+      mutate: (text) => text.replace('ReferrerPolicy: no-referrer', 'ReferrerPolicy: strict-origin'),
+      expect: 'nothing in the security-headers configuration may differ',
+    },
+    {
+      name: 'the transport-security fields lose a directive',
+      mutate: (text) => text.replace(/IncludeSubdomains: true/g, 'IncludeSubdomains: false'),
+      expect: 'the transport-security fields compose to',
+    },
+    {
+      name: 'the transport-security age drifts',
+      mutate: (text) => text.replace(/AccessControlMaxAgeSec: 63072000/g, 'AccessControlMaxAgeSec: 31536000'),
+      expect: 'the transport-security fields compose to',
+    },
+    {
+      name: 'a field nothing here reads appears in the security block',
+      mutate: (text) => text.replace(/ {12}Preload: true\n/g, '            Preload: true\n            IncludeSubDomains: true\n'),
+      expect: 'a field this check has never read',
+    },
+    {
+      name: 'a moved header is written as a custom header again',
       mutate: (text) =>
-        text.replace(/Value: 'max-age=63072000; includeSubDomains; preload'/g, "Value: 'max-age=63072000; includeSubDomains'"),
-      expect: 'strict-transport-security is',
+        text.replace(
+          '            - Header: permissions-policy\n',
+          "            - Header: referrer-policy\n              Value: 'no-referrer'\n              Override: true\n            - Header: permissions-policy\n",
+        ),
+      expect: 'CloudFront refuses it as one',
+    },
+    {
+      name: 'a security-headers configuration goes missing',
+      mutate: (text) => text.replace(/ {8}SecurityHeadersConfig:\n(?: {10,}.*\n)+/, ''),
+      expect: 'does not carry a security-headers configuration',
+    },
+    {
+      name: 'a security header stops overriding the origin',
+      mutate: (text) => text.replace(/(ReferrerPolicy: no-referrer\n\s+Override: )true/g, '$1false'),
+      expect: 'ReferrerPolicy.Override is',
     },
     {
       name: 'a governed header stops overriding the origin',
@@ -510,11 +731,16 @@ function main() {
     process.stdout.write('check-headers-policies — PASS: the two policies differ in the one field they may\n');
     return 0;
   }
-  process.stdout.write(`check-headers-policies — FAIL — ${refusals.length} refusal(s):\n\n`);
+  /** @type {string[]} */
+  const unreadable = Object.values(UNREADABLE);
+  const cannotSee = refusals.some((line) => unreadable.includes(line));
+  process.stdout.write(
+    `check-headers-policies — ${cannotSee ? 'CANNOT RUN' : 'FAIL'} — ${refusals.length} refusal(s):\n\n`,
+  );
   for (const line of refusals) {
     process.stdout.write(`  ${line}\n`);
   }
-  return 1;
+  return cannotSee ? 2 : 1;
 }
 
 process.exit(main());

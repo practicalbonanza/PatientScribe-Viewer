@@ -386,15 +386,24 @@ Resources:
   # asserts it, because two blocks that must stay equal while being written twice
   # are two blocks that will eventually differ by a character nobody sees.
   #
-  # Every governed value is written as a literal, character for character as the
-  # release check's frozen `headers.mjs` spells it. None of them is assembled from
-  # parts by CloudFront: the typed security-headers configuration would build the
-  # transport-security value out of a number and two flags, and the exact string
-  # it produces is CloudFront's spelling rather than this design's. A value that
-  # has to match to the character is a value written out, in one place, where it
-  # can be compared. That is why all six are custom headers and the typed
-  # security-headers configuration is not used at all — mixing the two would also
-  # mean the same header could be named in both places, which CloudFront refuses.
+  # Three of the six headers sit in the typed security-headers configuration and
+  # three are custom, and the split is not a preference. CloudFront's API refuses
+  # `content-security-policy`, `strict-transport-security` and `referrer-policy`
+  # as custom headers: each has a dedicated slot, and naming one in the custom
+  # list fails the change-set on execution with "security header … cannot be set
+  # as custom header". That refusal is API-side and is in no document — a template
+  # carrying them as custom headers validates, renders and creates a change-set
+  # like any other, and only the execute says no. The remaining three have no
+  # dedicated slot and stay where they are.
+  #
+  # Every governed value is still written out character for character as the
+  # release check's frozen `headers.mjs` spells it, with the one exception that
+  # cannot be: CloudFront builds the transport-security value itself, out of a
+  # number and two flags, so what is written here is the composition — 63072000
+  # seconds, subdomains included, preload — and the string it produces is
+  # CloudFront's spelling rather than this design's. The three fields are asserted
+  # against the frozen spelling here, and the bytes they compose to are read off
+  # the wire by the release check, which is the only place that string exists.
   #
   # The one substituted slot is the policy's connect-src, which is the API origin
   # and differs per environment. It is a parameter, not a literal, and it is the
@@ -415,19 +424,22 @@ Resources:
       ResponseHeadersPolicyConfig:
         Name: !Sub '${AWS::StackName}-default'
         Comment: Governed headers for every path outside /assets/; no-store overrides the origin.
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: !Sub "default-src 'none'; script-src 'self'; style-src 'self'; connect-src ${ApiOrigin}; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'"
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Preload: true
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
         CustomHeadersConfig:
           Items:
-            - Header: content-security-policy
-              Value: !Sub "default-src 'none'; script-src 'self'; style-src 'self'; connect-src ${ApiOrigin}; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'"
-              Override: true
             - Header: permissions-policy
               Value: 'camera=(), microphone=(), geolocation=()'
-              Override: true
-            - Header: strict-transport-security
-              Value: 'max-age=63072000; includeSubDomains; preload'
-              Override: true
-            - Header: referrer-policy
-              Value: 'no-referrer'
               Override: true
             - Header: x-robots-tag
               Value: 'noindex, noarchive, nosnippet'
@@ -449,19 +461,22 @@ Resources:
       ResponseHeadersPolicyConfig:
         Name: !Sub '${AWS::StackName}-assets'
         Comment: Governed headers for /assets/*; no-store is the fallback the object's own directive wins over.
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: !Sub "default-src 'none'; script-src 'self'; style-src 'self'; connect-src ${ApiOrigin}; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'"
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 63072000
+            IncludeSubdomains: true
+            Preload: true
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: no-referrer
+            Override: true
         CustomHeadersConfig:
           Items:
-            - Header: content-security-policy
-              Value: !Sub "default-src 'none'; script-src 'self'; style-src 'self'; connect-src ${ApiOrigin}; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'"
-              Override: true
             - Header: permissions-policy
               Value: 'camera=(), microphone=(), geolocation=()'
-              Override: true
-            - Header: strict-transport-security
-              Value: 'max-age=63072000; includeSubDomains; preload'
-              Override: true
-            - Header: referrer-policy
-              Value: 'no-referrer'
               Override: true
             - Header: x-robots-tag
               Value: 'noindex, noarchive, nosnippet'
