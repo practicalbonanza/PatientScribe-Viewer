@@ -246,9 +246,17 @@ export function assertDistribution({ stacks, distribution, alarms, expectedAlarm
         `${status} is cached for ${JSON.stringify(entry['ErrorCachingMinTTL'])}, and an error that outlives its cause is the thing this is set to zero for`,
       );
     }
-    if (entry['ResponsePagePath'] !== undefined) {
+    // An unset page is two values, not one. The template sets no
+    // `ResponsePagePath` at all, and the live control plane answers for that
+    // entry with an empty string rather than by omitting the field — measured on
+    // the first armed run against the deployed dev distribution, 2026-08-18,
+    // where this rule refused all eleven statuses on a distribution that was
+    // correct. Both spellings mean the same thing, which is that the status the
+    // origin produced is the status the browser gets.
+    const page = entry['ResponsePagePath'];
+    if (page !== undefined && page !== '') {
       refusals.push(
-        `${status} is answered with ${JSON.stringify(entry['ResponsePagePath'])}, and this origin serves the status that happened rather than a page about it`,
+        `${status} is answered with ${JSON.stringify(page)}, and this origin serves the status that happened rather than a page about it`,
       );
     }
   }
@@ -455,9 +463,20 @@ function conformingDocuments() {
         Quantity: 1,
         Items: [{ PathPattern: '/assets/*', TargetOriginId: 'viewer-origin', ResponseHeadersPolicyId: 'policy-assets' }],
       },
+      // The empty strings are the service's own spelling of an unset field, not a
+      // stand-in for one: the template sets neither of these, and this is what
+      // the control plane answers with for an entry that passes the status
+      // through. A fixture that omitted them would be a fixture the real answer
+      // does not match, which is how a rule that reads the field wrong stays
+      // green all the way to the first armed run.
       CustomErrorResponses: {
         Quantity: ERROR_STATUSES.length,
-        Items: ERROR_STATUSES.map((code) => ({ ErrorCode: code, ErrorCachingMinTTL: 0 })),
+        Items: ERROR_STATUSES.map((code) => ({
+          ErrorCode: code,
+          ErrorCachingMinTTL: 0,
+          ResponsePagePath: '',
+          ResponseCode: '',
+        })),
       },
     },
   };

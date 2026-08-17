@@ -66,6 +66,11 @@ cat > "$WORK/stacks.json" <<'JSON'
 }
 JSON
 
+# The error responses carry `""` for the page and the code, because that is what
+# the control plane answers with for the fields this template never sets. The
+# fake answers as the service answers: a document that omitted them would be a
+# document no distribution ever returns, and a rule that misread the real shape
+# would stay green here right up to the first armed run.
 cat > "$WORK/distribution.json" <<'JSON'
 {
   "DistributionConfig": {
@@ -80,17 +85,17 @@ cat > "$WORK/distribution.json" <<'JSON'
     "CustomErrorResponses": {
       "Quantity": 11,
       "Items": [
-        { "ErrorCode": 400, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 403, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 404, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 405, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 414, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 416, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 500, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 501, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 502, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 503, "ErrorCachingMinTTL": 0 },
-        { "ErrorCode": 504, "ErrorCachingMinTTL": 0 }
+        { "ErrorCode": 400, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 403, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 404, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 405, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 414, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 416, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 500, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 501, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 502, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 503, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" },
+        { "ErrorCode": 504, "ErrorCachingMinTTL": 0, "ResponsePagePath": "", "ResponseCode": "" }
       ]
     }
   }
