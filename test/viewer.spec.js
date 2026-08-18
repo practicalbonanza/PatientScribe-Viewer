@@ -1183,8 +1183,11 @@ const traffic = new WeakMap();
  * itself; this is a reading of the requests the surfaces below actually drive,
  * which is what closes the request the surfaces below actually make. The control
  * that holds at runtime for every request nothing here drives is CSP
- * `connect-src`, which the page carries itself as `'self'` and which
- * `smoke.spec.js` drives a refusal under. The directives a page cannot carry —
+ * `connect-src`, which the page carries itself as `'self'` and the one share API
+ * the committed origin table sends a page to — that table remaining the sole
+ * decider of what is ever asked for, since a policy permits a request and does
+ * not make one — and which `smoke.spec.js` drives both a refusal and a
+ * permission under. The directives a page cannot carry —
  * who may frame it, where violations are reported — still arrive with the deploy
  * configuration and are not in this repository.
  */

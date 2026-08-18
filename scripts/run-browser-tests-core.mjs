@@ -198,6 +198,15 @@ export const REQUIRED_TESTS = Object.freeze({
     // until something refuses a request under it, and a string is what every
     // other reading of it here can reach.
     'the policy the page carries is enforced against an origin that answers',
+    // And its other half, which is the only machine reading anywhere of the one
+    // thing the meta policy and the policy the hosting sets have to agree on. A
+    // browser enforces the intersection of every policy it is handed, so a meta
+    // naming `'self'` alone refuses the request the committed origin table
+    // decides on however the header was written — and nothing on the wire side
+    // can see it, because that side reads response headers and never parses the
+    // document. Skipped out, the suite would still clear every count here with
+    // the reconciliation unmeasured in both engines.
+    'the policy permits the one origin it names, and still refuses one it does not',
   ]),
   // The surface, which nothing else in this suite reads. The corpus asks what
   // the modules return and the smoke test asks what the page loaded; neither can

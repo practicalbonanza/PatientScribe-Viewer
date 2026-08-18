@@ -210,9 +210,9 @@ while [ "$WAITED" -lt 50 ]; do
   WAITED=$((WAITED + 1))
 done
 if grep -q 'listening' "$WORK/server.log" 2>/dev/null; then
-  record ok 'the local origin is up on the one origin the committed table answers for'
+  record ok 'the local origin is up on the local-conformance entry of the committed table'
 else
-  record fail 'the local origin is up on the one origin the committed table answers for' "$(cat "$WORK/server.log")"
+  record fail 'the local origin is up on the local-conformance entry of the committed table' "$(cat "$WORK/server.log")"
 fi
 
 # ---------------------------------------------------------------------------

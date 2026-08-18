@@ -27,9 +27,10 @@
  * importing them would be importing it.
  *
  * The one origin. It binds `127.0.0.1:4173` and nothing else, because that is the
- * one origin the committed table answers for — a page served from anywhere else
- * makes no request at all, and the check refuses an origin the table does not
- * name rather than skipping the question. Plain HTTP, because the committed entry
+ * local-conformance entry of the committed table — the entry that answers for
+ * itself, and the only one a local run can be served from. A page served from an
+ * origin that table does not name makes no request at all, and the check refuses
+ * such an origin rather than skipping the question. Plain HTTP, because the committed entry
  * is plain HTTP; the check's scheme comes from the origin it is pointed at.
  *
  * Usage: node scripts/infra/selftest/serve-built-release.mjs <layout-dir>

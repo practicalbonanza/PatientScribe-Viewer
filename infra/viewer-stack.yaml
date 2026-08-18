@@ -3,12 +3,23 @@ AWSTemplateFormatVersion: '2010-09-09'
 # The hosting the viewer is served from, as one template with two flavours.
 #
 # Everything here is public. The values that are not — the account, the bucket
-# names, the alarm topic, the API origin the policy names, and the three prod
-# identity values — are parameters, and their values live in a private overlay
-# that is never committed. Names cross the boundary; values do not. That split is
-# the whole reason this file can sit in a public repository beside the viewer it
-# serves, and it is why nothing below is written as a literal that happens to be
-# right for one account.
+# names, the alarm topic, and the three prod identity values — are parameters,
+# and their values live in a private overlay that is never committed. Names cross
+# the boundary; values do not. That split is the whole reason this file can sit
+# in a public repository beside the viewer it serves, and it is why nothing below
+# is written as a literal that happens to be right for one account.
+#
+# One parameter is supplied the same way and is NOT private: ApiOrigin, the
+# origin the policy's connect-src names. It rides that header on every response
+# this distribution serves, and the viewer's own served bytes carry it as well —
+# in the committed origin table, which decides where a share code travels, and in
+# the entry document's policy, which has to permit what that table decides. It is
+# a parameter here for the same reason the private ones are, which is that a
+# template with a value in it is a template for one account; it is not a
+# parameter here because the value is a secret. No default appears for it either,
+# and that is deliberate: a default is a value in a public file whether or not
+# the value is private, and a stack that is not told where its API is should
+# refuse rather than guess.
 #
 # The two flavours are the same stack. `Environment` selects between them, and
 # the only difference is the prod identity: a supplied certificate, the alias it
@@ -48,11 +59,13 @@ Description: >-
 #
 # Two kinds, and the difference matters more than the order they are written in.
 #
-# The boundary set — AccountId, the three bucket names, the log prefix, the alarm
+# The overlay set — AccountId, the three bucket names, the log prefix, the alarm
 # topic, the API origin, and the prod identity trio — carries no default and no
 # example value. Those are supplied from the private overlay at deploy time. A
 # default on one of them would be a value in a public file, which is the one
-# thing the boundary exists to prevent.
+# thing the boundary exists to prevent. All of them are overlay-supplied; all but
+# one are private as well, and the one is the API origin, for the reason set out
+# at the top of this file.
 #
 # That holds for the prod trio too, which is why they have no default rather than
 # an empty one: a dev overlay passes them explicitly as empty strings, and their

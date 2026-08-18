@@ -12,7 +12,8 @@ playwright/.cache/
 *.pem
 
 # The deploy overlay. Parameter names are public and live in the template;
-# their values are not, and this is where they land. Copy
+# their values are not — with one exception, ApiOrigin, which is supplied from
+# here and is public by design — and this is where they land. Copy
 # infra/parameters.json.example, fill it in, and it stays here.
 infra/parameters.json
 

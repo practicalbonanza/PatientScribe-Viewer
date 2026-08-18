@@ -172,7 +172,7 @@ async function runFixture(fixture) {
             },
         origin: scenario.origin,
         // Fixture mode supplies its own mapping, explicitly, at this layer. The
-        // committed table names one origin and it is not a fixture's — which is
+        // committed table names two origins and neither is a fixture's — which is
         // the whole reason the live command line takes no override and this does
         // not go through it.
         apiOriginFor: (asked) => (asked === scenario.deployment.origin ? scenario.deployment.apiOrigin : null),

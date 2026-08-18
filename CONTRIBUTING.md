@@ -25,8 +25,16 @@ comment, every commit message and every test fixture, from the first commit onwa
   handovers, or evidence of any kind. This repository carries source and the documentation a
   reader of that source needs — nothing about how it came to be written.
 - **No deployment configuration values.** No account identifiers, stack names, bucket names,
-  distribution identifiers, role names, or any other environment-specific value. Ever, in any
-  file. Infrastructure definitions may live here; the values they are deployed with do not.
+  distribution identifiers, role names, or any other environment-specific value. Infrastructure
+  definitions may live here; the values they are deployed with do not. There are exactly two
+  deliberate exceptions, and both are public by construction: the origin the viewer is served from,
+  which is the address in every share link a carer receives, and the origin of the share API, which
+  every response already broadcasts in the `connect-src` of its security policy. The served page has
+  to carry both — the first because the origin table is keyed on it, the second because a browser
+  refuses a request the page's own policy does not permit — and the checks that hold the page to
+  them transcribe them too, because a check that reads its expectation out of the thing it is
+  checking is not a check. Each is added one at a time in a reviewed change. Everything else: ever,
+  in any file.
 - **No secrets.** None exist here by construction, and nothing may introduce one. A viewer that
   needed a secret to do its job would be the wrong design, not a key-management problem.
 - **No third-party assets.** Fonts, scripts, styles and images are first-party and stay that

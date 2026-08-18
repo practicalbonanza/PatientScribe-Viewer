@@ -355,12 +355,14 @@ permission that grants nothing has no place in a least-privilege document.
    table as one key, in a reviewed change, because an entry in that table is a decision about where share
    codes travel and it should read as one in a diff.
 
-   That same commit must also reconcile the entry document's **meta** policy. The shipped meta carries
-   `connect-src 'self'`, and a browser enforces the INTERSECTION of the meta policy and the response-header
-   policy — so with the header naming the API origin and the meta naming only `'self'`, the live
-   cross-origin request would be blocked. The wire check cannot see any of this: it reads response headers
-   and never parses the document. The browser legs can, and this is where that is said. The edit sits inside
-   the pinned safe prefix of the entry document, so it carries its own re-pin round.
+   That same commit also reconciles the entry document's **meta** policy, and the fold has been made: the
+   shipped meta now carries `connect-src 'self' <the dev API origin>`. A browser enforces the INTERSECTION of
+   the meta policy and the response-header policy, so while the meta named only `'self'` the live
+   cross-origin request would have been blocked however the header was written. The wire check cannot see any
+   of this: it reads response headers and never parses the document. The browser legs can, and one of them
+   now measures the permission directly — the request is intercepted by the harness, so what is read is the
+   policy's decision and nothing leaves the machine. The edit sits inside the pinned safe prefix of the entry
+   document, so it carried its own re-pin round.
 4. **Build at that commit.** `node scripts/infra/build-release.mjs`.
 5. **Publish at the release-publish gate: commit the manifest under `releases/` AND push it.** The drivers
    read the public tip, so an unpushed manifest cannot switch.
@@ -369,7 +371,8 @@ permission that grants nothing has no place in a least-privilege document.
 
 ## Notes
 
-**Local conformance runs use `127.0.0.1:4173`.** That is the one origin the committed table answers for,
+**Local conformance runs use `127.0.0.1:4173`.** That is the local-conformance entry of the committed
+table — the entry that answers for itself, alongside the hosted entry that sends a viewer to its share API —
 and `scripts/infra/selftest/serve-built-release.mjs` binds it and nothing else. It exists for the
 self-tests; nothing else invokes it, and no response it writes is evidence about the real distribution. Its
 conformance bar is the real check's verdict: if the check refuses it, the defect is in that server or in

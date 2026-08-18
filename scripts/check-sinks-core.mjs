@@ -55,9 +55,13 @@
  *    written. The self-test asserts those misses deliberately, so the limit
  *    stays documented rather than assumed away. Read this as a tripwire against
  *    accident and drift. The controls against an author who is actually trying
- *    are review, and CSP — whose resource half the page carries itself, as a
- *    `'self'` policy written into `index.html` — and Trusted Types, which the
- *    origin adds along with the directives a page cannot carry.
+ *    are review, and CSP — whose resource half the page carries itself, as the
+ *    policy written into `index.html`. One directive there names an origin
+ *    outside this page and it is the only one: `connect-src` names `'self'` and
+ *    the share API the origin table sends a page to, because a request the table
+ *    decides on is a request the policy has to permit. The rest name `'self'` or
+ *    `'none'` — and Trusted Types, which the origin adds along with the
+ *    directives a page cannot carry.
  *
  * 4. Three ways off this page are not fetches, and the policy the page carries
  *    reaches none of them. They are named here because the paragraph above leans
@@ -181,6 +185,18 @@ const STYLESHEET_FILES = ['.css'];
  *   rule is not applied to. Empty on every rule but one, and the one is
  *   documented where it is declared: a construct that has to exist somewhere is
  *   refused everywhere else, which is a narrower rule than not having one.
+ * @property {Readonly<Record<string, RegExp>>} [patternIn] Repository-relative
+ *   paths this rule reads with a pattern of their own rather than with
+ *   `pattern`. Absent on every rule but one, and it is the other shape of the
+ *   same idea `exceptFiles` is: a construct that belongs in one named file is
+ *   admitted there and refused everywhere else.
+ *
+ *   The direction of the exception is what makes this safe to have. `pattern`
+ *   is the narrowest of the set and it is what every file not named here is
+ *   read with, so a file this does not know about is a file where nothing extra
+ *   is admitted — a path typed wrongly, a file renamed, a tree scanned from
+ *   somewhere else all fail closed. The only thing an entry here can do is
+ *   admit one more construct in one more named file.
  */
 
 /**
@@ -203,24 +219,78 @@ const STYLESHEET_FILES = ['.css'];
 export class ScanError extends Error {}
 
 /**
- * The three destinations this viewer names, and the file each belongs in.
+ * The served file that decides where this page's two requests go.
  *
- * The rule below admits these three spellings, and admits them wherever they are
- * written; this is what says where. Two are attributes in the page, because a
- * destination written into the markup is a destination no code ever assigns; one
- * is the origin table, where it is both the key and the value of the single
- * entry that table commits.
+ * One table, keyed on the origin the page was served from, and every value in
+ * it is a decision about where a share code travels.
+ *
+ * Up here rather than beside the reading that parses it, because the rules below
+ * are built from it: one of them admits a construct in this file and refuses it
+ * in every other, and a rule cannot name a file that is declared after it.
+ */
+export const ORIGIN_TABLE_FILE = 'site/js/config.js';
+
+/**
+ * The served file a browser is handed first, and the one carrying the policy.
+ *
+ * Named for the same reason and used the same way: the policy that says what may
+ * leave this page is written in this file and nowhere else, so the rule that
+ * admits the one destination that policy names admits it here and nowhere else.
+ */
+export const ENTRY_DOCUMENT_FILE = 'site/index.html';
+
+/**
+ * The origin the development server and the browser suite run on.
+ *
+ * A name rather than a spelling written out where it is used, because it is used
+ * three times below: in the admitted set, in the table pin, and in the reading
+ * that says which file it belongs in. Three transcriptions of one origin are
+ * three things to keep in step.
+ */
+const LOOPBACK_ORIGIN = 'http://127.0.0.1:4173';
+
+/** The address a carer visits while this viewer is hosted for development. */
+const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';
+
+/**
+ * The share API a page served from that address is allowed to talk to.
+ *
+ * The one destination here that belongs in two served files rather than one, and
+ * the one the admission below treats differently from its siblings. Both facts
+ * have the same cause and it is written out beside each of them.
+ */
+const HOSTED_DEVELOPMENT_API_ORIGIN = 'https://2kcwhm87v5.execute-api.ap-southeast-2.amazonaws.com';
+
+/**
+ * The five destinations this viewer names, and the file or files each belongs in.
+ *
+ * The rule below admits these five spellings; this is what says where each of
+ * them may appear and how often. Two are attributes in the page, because a
+ * destination written into the markup is a destination no code ever assigns. Two
+ * more are the origin table's keys — the origin the development server runs on,
+ * which is also its own destination, and the address the hosted development
+ * viewer is served from.
+ *
+ * The fifth is the share API, and it is the only one whose value is two files.
+ * That is not a convenience: the origin table names it because the table decides
+ * where a share code travels, and the entry document's policy names it because a
+ * browser refuses a request the policy does not permit. Neither site can be
+ * dropped in favour of the other, so the honest shape of this map is a list of
+ * files per spelling rather than one file per spelling with an exception written
+ * in prose.
  *
  * Above the rules rather than beside `countAllowedUrls` below, because the rule
  * is built from it. The spellings a scan admits and the spellings a reader is
  * told about were two lists in one file, and two lists in one file drift.
  *
- * @type {Readonly<Record<string, string>>}
+ * @type {Readonly<Record<string, readonly string[]>>}
  */
 export const ALLOWED_URLS = Object.freeze({
-  'https://apps.apple.com/au/app/id6758035505': 'site/index.html',
-  'https://patientscribe.com.au/privacy-policy': 'site/index.html',
-  'http://127.0.0.1:4173': 'site/js/config.js',
+  'https://apps.apple.com/au/app/id6758035505': Object.freeze([ENTRY_DOCUMENT_FILE]),
+  'https://patientscribe.com.au/privacy-policy': Object.freeze([ENTRY_DOCUMENT_FILE]),
+  [LOOPBACK_ORIGIN]: Object.freeze([ORIGIN_TABLE_FILE]),
+  [HOSTED_DEVELOPMENT_ORIGIN]: Object.freeze([ORIGIN_TABLE_FILE]),
+  [HOSTED_DEVELOPMENT_API_ORIGIN]: Object.freeze([ENTRY_DOCUMENT_FILE, ORIGIN_TABLE_FILE]),
 });
 
 /**
@@ -273,15 +343,235 @@ const QUOTES = ["'", '"', '`'];
  * A spelling followed by some quote is a spelling that may still be inside a
  * string opened with a different one, and the characters after it would then be
  * part of the destination — so the quote in front and the quote behind have to
- * be the same character, which is why this is nine alternatives rather than
- * three: each of the three destinations, once per quote it could be written
- * between.
+ * be the same character, which is why this is a dozen alternatives rather than
+ * four: each of the four generally admitted destinations, once per quote it
+ * could be written between.
+ *
+ * Four rather than five, and the missing one is the whole of the paragraph
+ * further down. Which four is read off the map rather than written out again, so
+ * a destination added to that map joins this admission by being added there and
+ * the one entry held out is held out by name.
+ *
+ * @type {readonly string[]}
+ */
+const GENERALLY_ADMITTED = Object.keys(ALLOWED_URLS).filter((url) => url !== HOSTED_DEVELOPMENT_API_ORIGIN);
+
+/** @see GENERALLY_ADMITTED @type {string} */
+const QUOTE_ADMITTED = QUOTES.flatMap((quote) =>
+  GENERALLY_ADMITTED.map((url) => `(?<=${quote})${asPattern(url)}(?=${quote})`),
+).join('|');
+
+/**
+ * The bytes the entry document's policy writes in front of the share API.
+ *
+ * Not a URL and not a spelling this scan is otherwise about: it is the source
+ * list of one directive, up to and including the space that separates its second
+ * source from its first.
+ */
+const POLICY_CONNECT_SOURCE = "connect-src 'self' ";
+
+/**
+ * And the bytes that open the element that policy is written in.
+ *
+ * The whole of the element up to the value, because what is being told apart is
+ * a policy from a string that reads like one. Markup can write those same
+ * directive bytes into any attribute of any element — a `title`, an `alt`, a
+ * `data-` anything — and a reading anchored on the directive alone admits every
+ * one of them. Anchored on this, the spelling has to sit inside the value of the
+ * `content` attribute of a policy element that begins its line, which is where
+ * the served file writes it and where a browser reads a policy from.
+ */
+const POLICY_ELEMENT_OPEN = '<meta http-equiv="Content-Security-Policy" content="';
+
+/**
+ * What may sit between the opening of that value and the directive.
+ *
+ * Directives, and the two bytes that end one. A policy is a list separated by
+ * semicolons, so the directive this admission is about is either the first thing
+ * in the value or the thing after a separator — and writing that down is the
+ * difference between reading a directive and reading a string that ends with
+ * one. `connect-src` is a suffix of `xconnect-src`, which is not a directive any
+ * browser has ever heard of and is therefore ignored entirely: a policy carrying
+ * it names the share API nowhere, permits nothing, and a page relying on that
+ * permission stops working — with a reading that matched the directive name as a
+ * bare substring calling the file conformant. Measured: it did.
+ *
+ * Optional, because the directive can also be the first in the value, and that
+ * is a policy this file has no opinion about the ordering of.
+ */
+const POLICY_DIRECTIVE_BOUNDARY = '(?:[^"]*; )?';
+
+/**
+ * The name the origin table's module declares that destination under.
+ *
+ * The identifier and not merely the shape of a declaration, for the same reason
+ * `ORIGIN_TABLE_NAME` below is written out: `const anything = '<the share API>';`
+ * is a shape any served module can write, and admitting the shape would admit
+ * this spelling in any file that felt like declaring it. Admitting the one
+ * declaration admits the one declaration. A rename is then a red scan rather
+ * than a silent move, which is what a rename of this constant should be.
+ */
+const API_ORIGIN_CONSTANT_NAME = 'HOSTED_DEVELOPMENT_API_ORIGIN';
+
+/**
+ * The share API, admitted at two positions and refused everywhere else.
+ *
+ * Every other admitted spelling is admitted wherever it is written between a
+ * matching pair of quotes, and that is right for them: each belongs in exactly
+ * one served file, the count beside this scan says which, and inside that file
+ * there is no second place the spelling could sit and mean something else.
+ *
+ * This one is different in both halves of that. It belongs in TWO files, and in
+ * one of them — the entry document — it sits inside a policy attribute, between
+ * a space and a semicolon, where there is no quote in front of it and none
+ * behind. So the generic admission could never have admitted it there: written
+ * into the policy, the spelling would have been refused as an external
+ * destination the moment the policy named it.
+ *
+ * Widening the generic admission to reach it would have been the wrong repair,
+ * and the reason is the other half. The entry document is markup, and markup
+ * writes destinations between quotes all the time: with this spelling on the
+ * generic admission, a link element carrying it as an attribute would be
+ * admitted, and it would be admitted in place of the policy occurrence rather
+ * than as well as it — one occurrence in that file is what the count requires,
+ * and the count cannot tell which one it found. The position would then be held
+ * by nothing at all, and the served page would carry a link to the share API
+ * where it used to carry the permission to reach it.
+ *
+ * So the admission for this entry is built per position rather than per quote,
+ * and it is two positions:
+ *
+ * 1. The one named constant in the origin table's module — the spelling as the
+ *    whole of a quoted string that the `const` named above is declared with and
+ *    a semicolon ends. That is where the table's second entry gets its value
+ *    from. Any other constant carrying the same spelling is refused, which is
+ *    why the identifier is part of the pattern rather than the shape of a
+ *    declaration.
+ * 2. The second source of the policy's `connect-src` directive in the entry
+ *    document — the spelling between the bytes above and the semicolon that ends
+ *    the directive.
+ *
+ * The second is the inversion this file already explains, asked of a different
+ * closing byte. A quoted string ends at its closing quote; a source in a policy
+ * ends at whitespace or at the semicolon that ends the directive. A spelling
+ * followed by one more character of a URL is therefore not admitted here, and
+ * neither is a spelling followed by a space and a second source — which is what
+ * naming a second destination in that directive would look like.
+ *
+ * "Two positions" is a claim about a position IN A FILE, and there are two ways
+ * to fail it that a pattern alone fails at. Both were measured on a working
+ * version of this that had neither, and both are worth writing down because
+ * neither is obvious from reading a regular expression.
+ *
+ * The first is that an anchor travels with what it anchors. These patterns are
+ * bytes, the scan applies them to every served file, and bytes can be typed
+ * anywhere — so the policy anchor pasted into a comment in the origin table's
+ * module was admitted there, and the constant anchor would have been admitted
+ * inside the entry document. That is why the two are NOT one alternation applied
+ * everywhere: each is written into `patternIn` under the one file it is the
+ * position of, and every other file is read with the pattern that has neither.
+ * The direction of that exception is what keeps it honest — a file this does not
+ * name is a file where nothing extra is admitted at all.
+ *
+ * The second is that a file has more than one position in it. Naming the file
+ * says nothing about where inside it, and the entry document is markup: the
+ * directive bytes written into a `title` attribute in the body are the same
+ * bytes as the directive, so with the real policy occurrence deleted and those
+ * bytes pasted into the body, the count found its one occurrence in the file it
+ * belongs to and the scan admitted it — a page carrying an inert attribute where
+ * it used to carry the permission to reach its own API, with everything green.
+ * So each admission is anchored from the START of its line: the origin table's
+ * to a line that begins with the declaration and ends with its semicolon, the
+ * entry document's to a line that begins with the policy element, with the
+ * spelling inside the value of its `content` attribute — a span that cannot
+ * reach past the quote that closes it, so no second attribute on that same line
+ * can carry it either.
+ *
+ * What this still does NOT do is count. `countAllowedUrls` beside this scan is
+ * what says the spelling appears exactly once in each file it belongs to, and
+ * the two compose: this says where a line may put it, that says how many lines
+ * do.
+ *
+ * And one CLASS of shape it does not reach, named here rather than left to be
+ * found, because it is the same limit paragraph 2 at the top of this module
+ * already declares for every other rule: this scan reads a line at a time. An
+ * admitted line reproduced EXACTLY is admitted, whatever encloses it, and what
+ * encloses a line is never on the line. A block comment is the obvious member of
+ * the class and it is not the only one — a `<template>` element holds markup the
+ * browser parses and never applies, and a block scope holds a declaration that
+ * runs and is reachable by nothing. Each is opened somewhere above and closed
+ * somewhere below, which is exactly what a reading of one line cannot see.
+ *
+ * That is a miss about ENCLOSURE rather than about position: every byte of the
+ * line is the byte the position requires, which is why nothing narrower closes
+ * it and why widening the reading to "unless it looks enclosed" would be a claim
+ * about a parser again — and a wrong one, since which enclosures are open at a
+ * given line is the whole of what parsing is.
+ *
+ * Enclosure has a sibling, and it is worth naming beside it because the two are
+ * the same limit wearing different clothes: TRIVIA BETWEEN TOKENS. A comment
+ * does not only sit around lines, it sits inside them, and a language lets it
+ * sit anywhere a space can. A declaration whose name is followed by a comment
+ * and then by its `=` is one declaration to an engine and, to any reading that
+ * expects whitespace in that position, no declaration at all. (The shape cannot
+ * be written out here: the two characters that close a comment would close this
+ * one.)
+ * That was measured on the origin table's own module: a comment between the
+ * table's name and its `=` hid the live declaration from a reading of text
+ * entirely, leaving a commented decoy above it as the only declaration the
+ * reading could see. Neither this rule nor the readings beside it close that,
+ * for the same reason they do not close enclosure — where trivia may appear is a
+ * fact about a grammar, and a grammar is what a line scan is not.
+ *
+ * What closes both is not in this file. The self-test imports the served module
+ * and compares the table an engine evaluates against the entries this repository
+ * pins, and an engine reads around trivia and enclosure because that is what
+ * reading a program is. That is why the reading here is a reviewability control
+ * and the completeness claim is made there.
+ *
+ * What it costs is bounded, and the bound is the rest of the gate rather than
+ * this pattern. Such a line is either a SECOND occurrence — and the count beside
+ * this refuses a second occurrence in either file, whatever encloses either of
+ * them — or it REPLACES the real one, and then:
+ *
+ *   - In the entry document, the served page no longer carries the share API in
+ *     an applied policy at all: a policy element inside a `<template>` is parsed
+ *     and never applied, and one inside a comment is not parsed. The browser
+ *     suite reads that three ways in both engines — the policy pinned in the
+ *     element inventory, the byte comparison of the document through the end of
+ *     the policy element, and the test that drives a real permitted request
+ *     under it.
+ *   - In the origin table's module, the declaration the table's second entry is
+ *     built from is not running — and it is worth being exact about what
+ *     notices, because the readings beside this one do not. They read raw text:
+ *     a declaration inside a comment is counted like any other and its literal
+ *     is resolved like any other, so a REPLACING commented declaration looks to
+ *     them like a name declared once with a good value, and the pin is green.
+ *     What refuses it is the module itself. The table refers to a name nothing
+ *     declares, so the typecheck step ahead of this one reports the name as not
+ *     found, and the self-test's runtime import — which asks the module what it
+ *     answers rather than what it says — throws on evaluating it. Measured, both
+ *     of them, on this file. A name declared twice IS caught by the readings
+ *     beside this, which is the case where the live declaration stays and a
+ *     second one is added; the replacing case belongs to the two layers named
+ *     here.
+ *
+ * There is no arrangement of one enclosed line that is green everywhere; there
+ * is an arrangement that is green HERE, and that is what this paragraph is
+ * for.
  *
  * @type {string}
  */
-const ADMITTED_URLS = QUOTES.flatMap((quote) =>
-  Object.keys(ALLOWED_URLS).map((url) => `(?<=${quote})${asPattern(url)}(?=${quote})`),
+const ORIGIN_TABLE_ADMITTED = QUOTES.map(
+  (quote) =>
+    `(?<=^const\\s+${API_ORIGIN_CONSTANT_NAME}\\s*=\\s*${quote})` +
+    `${asPattern(HOSTED_DEVELOPMENT_API_ORIGIN)}(?=${quote};$)`,
 ).join('|');
+
+/** @see ORIGIN_TABLE_ADMITTED @type {string} */
+const ENTRY_DOCUMENT_ADMITTED =
+  `(?<=^\\s*${asPattern(POLICY_ELEMENT_OPEN)}${POLICY_DIRECTIVE_BOUNDARY}${asPattern(POLICY_CONNECT_SOURCE)})` +
+  `${asPattern(HOSTED_DEVELOPMENT_API_ORIGIN)}(?=;)`;
 
 /**
  * The characters a URL parser deletes before it reads anything at all.
@@ -414,8 +704,36 @@ const HOST_START = '[^#?]';
  * ordinary `new URL(` in a served module would have been reported as a resource
  * this page pulls in. Nothing under `site/` writes one today, which is the only
  * reason that was still a latent fault rather than a wrong answer.
+ *
+ * Built rather than written out once, because there are three of these and they
+ * differ in exactly one thing: what they admit. The narrowest is the one every
+ * served file is read with; the other two are the narrowest plus the one
+ * position their own file has, and each is named under that file in `patternIn`
+ * below. Three spellings of this expression would be three things to keep in
+ * step, and the two that admit more would be the ones nobody was reading.
+ *
+ * @param {string} admitted
+ * @returns {RegExp}
  */
-const EXTERNAL_URL = new RegExp(`(?!${ADMITTED_URLS})${SCHEME}|${QUOTE}${TRIMMED}${SLASHES}${HOST_START}`);
+function externalUrl(admitted) {
+  return new RegExp(`(?!${admitted})${SCHEME}|${QUOTE}${TRIMMED}${SLASHES}${HOST_START}`);
+}
+
+/**
+ * What every served file is read with: the four spellings admitted between
+ * matching quotes, and nothing else.
+ *
+ * The floor of the set, and the one an unrecognised file gets. Neither position
+ * of the share API is in here, so a file this scan has not been told about is a
+ * file that refuses the share API outright.
+ */
+const EXTERNAL_URL = externalUrl(QUOTE_ADMITTED);
+
+/** The above, plus the one line of the origin table's module that may carry the share API. */
+const EXTERNAL_URL_IN_ORIGIN_TABLE = externalUrl(`${QUOTE_ADMITTED}|${ORIGIN_TABLE_ADMITTED}`);
+
+/** The above, plus the one line of the entry document that may carry it. */
+const EXTERNAL_URL_IN_ENTRY_DOCUMENT = externalUrl(`${QUOTE_ADMITTED}|${ENTRY_DOCUMENT_ADMITTED}`);
 
 /**
  * A named member of a named object, in the three spellings that reach it without
@@ -651,10 +969,11 @@ export const RULES = [
     // at the top of this module applies to it exactly as much. `navigator['sendBeacon']`
     // is one of them, name match or no name match. The control that actually
     // holds at runtime is CSP `connect-src`, which the page carries itself as
-    // `'self'` — the origin it is served from being the origin it talks to — and
-    // which a browser test drives a real refusal under. This is the same requirement
-    // asserted at the earliest point it can be asserted, where it costs one line
-    // and catches the accident.
+    // `'self'` and the one share API the committed table sends a page to — two
+    // entries in that table, and the second is the one whose key and value are
+    // different origins — and which a browser test drives a real refusal under.
+    // This is the same requirement asserted at the earliest point it can be
+    // asserted, where it costs one line and catches the accident.
     pattern: /\bsendBeacon\b|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b/,
     why: 'sends data off the page',
   },
@@ -837,27 +1156,40 @@ export const RULES = [
     // is the same requirement written somewhere else, and it is the rule below
     // this one, declared for the files it can be written in.
     //
-    // Three destinations are admitted, and they are the three this viewer has:
-    // the app on the store, the privacy policy, and the origin the development
-    // server and the browser suite run on. The alternation that admits them is
-    // built from `ALLOWED_URLS` above rather than written out a second time
-    // here, so the spellings this refuses to refuse and the spellings the check
-    // beside it looks for cannot be two different lists. They are in a reviewed
-    // file rather than annotated at their call sites, for the reason every
-    // allowance in this file is: a suppression at a call site is a suppression.
+    // Five destinations are admitted, and they are the five this viewer has: the
+    // app on the store, the privacy policy, the origin the development server
+    // and the browser suite run on, the address the hosted development viewer is
+    // served from, and the share API a page served from that address talks to.
+    // The alternation that admits them is built from `ALLOWED_URLS` above rather
+    // than written out a second time here, so the spellings this refuses to
+    // refuse and the spellings the check beside it looks for cannot be two
+    // different lists. They are in a reviewed file rather than annotated at
+    // their call sites, for the reason every allowance in this file is: a
+    // suppression at a call site is a suppression.
     //
     // Each is admitted whole, and that is the difference between an allowance
-    // and a prefix. A destination that begins with one of the three and carries
+    // and a prefix. A destination that begins with one of the five and carries
     // on is a different destination — a campaign token on the end of the store
     // link is the clearest case, and a campaign token is the one thing that link
-    // is built not to have. So an admitted spelling is admitted where it is
-    // written between a matching pair of quotes and ends at the closing one, and
-    // refused wherever anything at all is written after it on the same line,
-    // which is what `ADMITTED_URLS` above sets out and why it is written that way
-    // round. On the same line, and inside the one string: a destination whose
-    // second half is a second string, joined to the first once something has
-    // run, is a destination no reading of either string can see, and that is a
-    // named miss rather than something this covers.
+    // is built not to have. So four of them are admitted where they are written
+    // between a matching pair of quotes and end at the closing one, and refused
+    // wherever anything at all is written after them on the same line, which is
+    // what `QUOTE_ADMITTED` above sets out and why it is written that way round.
+    // On the same line, and inside the one string: a destination whose second
+    // half is a second string, joined to the first once something has run, is a
+    // destination no reading of either string can see, and that is a named miss
+    // rather than something this covers.
+    //
+    // The fifth is admitted per position instead of per quote, and the whole of
+    // why is beside `ORIGIN_TABLE_ADMITTED` and `ENTRY_DOCUMENT_ADMITTED` above,
+    // which are the two positions and the two declarations. In short: it belongs
+    // in two
+    // files rather than one, and in the entry document it sits inside a policy
+    // attribute where there is no quote on either side of it — so the generic
+    // admission could not reach it there, and widening the generic admission to
+    // reach it would have admitted the same spelling as an ordinary quoted
+    // attribute anywhere in that file, which is a link to the share API standing
+    // in for the permission to reach it with every count below still satisfied.
     //
     // The scheme is part of the spelling for the same reason. The store link is
     // https and the development origin is http; swapping them names something
@@ -923,13 +1255,26 @@ export const RULES = [
     // typed is written exactly that way, on three lines. The other two leaning
     // spellings cost nothing and are read.
     //
-    // The allowance is by spelling and says nothing about where the spelling
-    // appears. What says that is `countAllowedUrls` beside this scan, which
-    // reads the served tree and requires each of the three to appear once, in
-    // the file it belongs to. Neither half is the other's proof, and neither is
-    // proof that the page fetches nothing else — a lexical scan reads lines, and
-    // the control that holds at runtime is CSP at the origin.
+    // The allowance is by spelling, and for four of the five it says nothing at
+    // all about which file the spelling appears in. What says that is
+    // `countAllowedUrls` beside this scan, which reads the served tree and
+    // requires each of the five to appear exactly once in each file it belongs
+    // to and nowhere else — four of them in one file each, and the share API in
+    // two. Neither half is the other's proof, and neither is proof that the page
+    // fetches nothing else — a lexical scan reads lines, and the control that
+    // holds at runtime is CSP at the origin.
     pattern: EXTERNAL_URL,
+    // And the two files that are read with one more admission than that. The
+    // share API belongs in both of them and nowhere else, and inside each it
+    // belongs on one line: `patternIn` is what makes "at two positions" a claim
+    // about positions rather than about bytes that could be typed anywhere.
+    // Every other served file — and every file in every fixture and scratch tree
+    // this scan is ever pointed at — is read with `pattern` above, which admits
+    // neither.
+    patternIn: Object.freeze({
+      [ORIGIN_TABLE_FILE]: EXTERNAL_URL_IN_ORIGIN_TABLE,
+      [ENTRY_DOCUMENT_FILE]: EXTERNAL_URL_IN_ENTRY_DOCUMENT,
+    }),
     why: 'names something outside this page',
   },
   {
@@ -1148,6 +1493,36 @@ function exempt(rule, shown) {
 }
 
 /**
+ * The pattern a named file is read with.
+ *
+ * By whole path, like the exemption above, and for the same reason: a second
+ * `config.js` somewhere else in the served tree is not the file whose one line
+ * may carry the share API.
+ *
+ * Own properties only. The lookup key is a path, paths are arbitrary text, and a
+ * property read that answered for an inherited name would hand back whatever
+ * `Object.prototype` has under `constructor` or `toString` — which is not a
+ * pattern, and `.test` on it would throw or, worse, not. This is the same
+ * reasoning the served origin table is written with, and it is here for the same
+ * reason: the thing being looked up did not come from this file.
+ *
+ * Absent, misspelled, or a path this tree does not hold: `pattern`, which is the
+ * narrowest of the set. Failing closed is the whole of why the exception is
+ * written in this direction.
+ *
+ * @param {Rule} rule
+ * @param {string} shown A repository-relative path.
+ * @returns {RegExp}
+ */
+function patternFor(rule, shown) {
+  if (rule.patternIn === undefined || !Object.prototype.hasOwnProperty.call(rule.patternIn, shown)) {
+    return rule.pattern;
+  }
+  const found = rule.patternIn[shown];
+  return found instanceof RegExp ? found : rule.pattern;
+}
+
+/**
  * The one served file that may make a request, and how many it may make.
  *
  * The scan refuses the construct everywhere else; nothing in the scan says how
@@ -1179,16 +1554,11 @@ export function countNetworkCallSites(root = SHIPPED_TREE) {
 }
 
 /**
- * The served file that decides where this page's two requests go.
+ * Where the origin table sits inside the served tree, which is what the reading
+ * below finds it by.
  *
- * One table, keyed on the origin the page was served from, and every value in
- * it is a decision about where a share code travels.
- */
-export const ORIGIN_TABLE_FILE = 'site/js/config.js';
-
-/**
- * And where it sits inside the served tree, which is what the reading below
- * finds it by.
+ * The file itself is `ORIGIN_TABLE_FILE`, declared up with the rules because one
+ * of them is about it.
  *
  * Two spellings of one file, and the difference is which root each is measured
  * from. The name above is repository-relative, which is how every path in this
@@ -1211,18 +1581,64 @@ const ORIGIN_TABLE_IN_TREE = 'js/config.js';
 const ORIGIN_TABLE_NAME = 'API_ORIGINS';
 
 /**
- * Every entry of that table, and every entry that does not answer with itself.
+ * The table the served module is required to be, entry for entry.
  *
- * What this exists for is one edit. The table commits a single key today, and
- * it is written as one constant used as both the key and the value, so the
- * origin a page is served from and the origin it talks to cannot come apart. The
- * moment a second origin is added — which is what going live is — they can:
- * `{ [DEVELOPMENT]: DEVELOPMENT, [PRODUCTION]: DEVELOPMENT }` is a one-word slip
- * that sends every production recipient's access code to a development host, and
- * nothing anywhere read it. The rule set above reads spellings and cannot: both
- * strings would be admitted destinations in the file they are admitted in, and
- * `countAllowedUrls` beside it would find each of them once, in `config.js`,
- * exactly as it is required to.
+ * A pin rather than an invariant, and the difference is the edit that produced
+ * it. This reading used to hold a universal — every entry answers with itself —
+ * which was true of a table with one key in it, written as one constant used as
+ * both halves so the origin a page is served from and the origin it talks to
+ * could not come apart. That universal was written for the moment a second
+ * origin arrived, because that is the moment they can come apart, and the second
+ * origin has now arrived: the hosted development viewer is served from one
+ * address and its share API answers at another, so the entry that going live
+ * actually needed is an entry the old universal refuses.
+ *
+ * A universal that has to be relaxed to admit the change it was written for
+ * stops being a control. So what replaced it is the table written out: these
+ * entries, these destinations, and nothing else. Any missing entry, any extra
+ * entry, any different destination is a failure that names what it found — in
+ * the bytes this reading can see.
+ *
+ * That last clause is the whole of what this pin is now, and it is worth being
+ * plain about the demotion. "These entries and no others" is a claim about a
+ * program, and this reads text: four times over, a table was written so that
+ * what an engine evaluates and what a reading of the file sees were different
+ * things, and each time this pin was green about a table it had not read. The
+ * completeness claim therefore lives at the self-test's runtime layer, which
+ * imports the served module and compares the EVALUATED table against the same
+ * written-out entries. What survives here is the reviewability claim, and it is
+ * a real one: these are the bytes a reviewer reads in a diff, this refuses every
+ * departure it can see in them, and it says "cannot read" rather than guessing
+ * about the shapes it cannot. Both are needed — a table nobody can review is not
+ * fixed by evaluating correctly today.
+ *
+ * That answers the one-word slip the universal was for, and answers it more
+ * exactly. `{ [VIEWER]: SOMEWHERE_ELSE }` sends every recipient's access code to
+ * whatever `SOMEWHERE_ELSE` is; under a self-equality rule it was refused
+ * because the two halves differed, which is a rule that would also have refused
+ * the correct entry above. Under this it is refused because the destination is
+ * not the one destination that key has, which is the thing actually worth
+ * refusing.
+ *
+ * Spellings from the constants above rather than written out again here, so the
+ * table this pins and the spellings the scan admits are one list.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const ORIGIN_TABLE = Object.freeze({
+  [LOOPBACK_ORIGIN]: LOOPBACK_ORIGIN,
+  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,
+});
+
+/**
+ * Every entry of that table, and every way it is not the table pinned above.
+ *
+ * What this exists for is one edit, and the edit has now been made. The rule set
+ * above reads spellings and cannot see it: every one of these strings is an
+ * admitted destination in the file it is admitted in, and `countAllowedUrls`
+ * beside it would find each of them once, in `config.js`, exactly as it is
+ * required to. Neither of those readings looks at which key a destination is
+ * written under, which is the only thing that decides where a share code goes.
  *
  * So this reads the table as source, in the tree that is served, the way
  * `countAllowedUrls` reads the same file for the same reason: what the shipped
@@ -1256,20 +1672,159 @@ export function readApiOrigins(root = SHIPPED_TREE) {
 
   const text = readFileSync(file, 'utf8');
 
-  /** Every `const NAME = '…';` in the file, so a computed key can be resolved. */
-  /** @type {Map<string, string>} */
-  const constants = new Map();
-  for (const found of text.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(['"])((?:(?!\2).)*)\2\s*;/g)) {
-    constants.set(String(found[1]), String(found[3]));
+  /**
+   * How many times each name in the file is declared, and — separately, below —
+   * what the ones declared as a quoted string hold.
+   *
+   * The count is the point of it, and it is asked of the left-hand side alone:
+   * `const`, `let` or `var`, the name, the `=`. This reads raw text and text
+   * includes
+   * comments — paragraph 2 at the top of this module says so about every rule
+   * here — so "the value of NAME" is a question with more than one answer in a
+   * file where the name is declared twice, and the answer this used to give was
+   * whichever came last. That is not a tie-break, it is the wrong reading: a
+   * module declaring the constant WRONG in code and RIGHT again inside a block
+   * comment resolved to the commented spelling, and this reported a table it had
+   * not read. Measured, on this file — the pin was green, entry for entry, while
+   * the module sent a hosted viewer's share codes to the loopback.
+   *
+   * So the count is kept and a name written more than once resolves to nothing
+   * at all.
+   *
+   * Counted across the whole file, by the left-hand side, for `const`, `let` and
+   * `var` alike. What a second declaration MEANS is deliberately not guessed at:
+   * it can be dead, commented out, in another scope, or the one that runs — and
+   * which of those it is, is exactly what a reading of text cannot say. Refusing
+   * to resolve the name is the answer that does not require knowing.
+   */
+  /**
+   * How many times each name is declared, whatever it is declared AS.
+   *
+   * Counting and reading are two questions and this is the counting one. It was
+   * one question, asked with the pattern that reads a quoted string, and that is
+   * a net with a hole exactly the shape of every other way to write a
+   * declaration: a live `const NAME = SOME_OTHER_NAME;` beside a commented
+   * `const NAME = 'the right spelling';` was ONE literal declaration by that
+   * count, so the name resolved to the commented spelling and nothing anywhere
+   * said otherwise. Measured, on this file — scan green, every reading green,
+   * and the module sending a hosted viewer's share codes to the loopback.
+   *
+   * So this counts a declaration by its left-hand side alone: the keyword, the
+   * name, the `=`. What follows is not looked at, because what follows is
+   * exactly what the hole was made of — an identifier, a template literal, a
+   * call, a concatenation, anything somebody writes next is a declaration of
+   * that name whether or not this file can read its value.
+   *
+   * `let` and `var` as well as `const`, for the same reason: the question is how
+   * many times the name is written down, not how firmly.
+   */
+  /** @type {Map<string, number>} */
+  const declaredTimes = new Map();
+  for (const found of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)) {
+    const name = String(found[1]);
+    declaredTimes.set(name, (declaredTimes.get(name) ?? 0) + 1);
   }
 
-  const declared = new RegExp(
-    `\\bconst\\s+${ORIGIN_TABLE_NAME}\\s*=\\s*Object\\s*\\.\\s*freeze\\s*\\(\\s*\\{([^}]*)\\}`,
-  ).exec(text);
-  if (declared === null) {
+  /**
+   * And the reading question: the value, where the declaration is a quoted
+   * string.
+   *
+   * Narrower than the count on purpose. This module resolves a name to a string
+   * and a quoted literal is the only shape it can do that from without running
+   * anything — so a name declared once, as something else, is a name whose value
+   * this does not know, and the entry that needs it is reported rather than
+   * guessed at.
+   */
+  /** @type {Map<string, string>} */
+  const literals = new Map();
+  for (const found of text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(['"])((?:(?!\2).)*)\2\s*;/g)) {
+    literals.set(String(found[1]), String(found[3]));
+  }
+
+  /**
+   * A constant's value, or the reason there is not one.
+   *
+   * Three reasons, and they are different failures: the name is not declared at
+   * all; it is declared more than once, so which spelling it holds is not
+   * something a reading of text can answer; or it is declared exactly once and
+   * not as a quoted string, so this knows where the value comes from and not
+   * what it is.
+   *
+   * @param {string} name
+   * @returns {{ value: string } | { duplicated: string } | { unreadable: string } | null}
+   */
+  const constantNamed = (name) => {
+    const times = declaredTimes.get(name) ?? 0;
+    if (times === 0) {
+      return null;
+    }
+    if (times > 1) {
+      return { duplicated: name };
+    }
+    const value = literals.get(name);
+    return value === undefined ? { unreadable: name } : { value };
+  };
+
+  /**
+   * How many times the table itself is declared, counted the way every other
+   * name in this file is counted: by the left-hand side alone.
+   *
+   * This is the same asymmetry, in the last place it was still alive. A reading
+   * that LOCATES by shape and COUNTS by that same shape counts only the
+   * declarations it can already read — so a declaration written in a shape it
+   * cannot read is not a second declaration to it, it is no declaration at all,
+   * and whatever it CAN read becomes the whole file as far as it is concerned.
+   * A conforming table in a block comment, above a live one wrapped in one extra
+   * pair of parentheses, was exactly that: one readable declaration, which was
+   * the comment. Every reading below this — the entries, the pin, the
+   * destinations — was a reading of the comment, and the live table quietly
+   * carried an entry nobody reviewed. Measured, on this file, with the whole
+   * gate green.
+   *
+   * So the count is asked of the left-hand side and nothing else — the keyword,
+   * the name, the `=` — which is what `declaredTimes` above already holds for
+   * every name in the file. Two declarations of this name is a file this cannot
+   * read, whatever shapes they are in, and the strict reader below never runs.
+   *
+   * With that closed, a single declaration in a shape the strict reader cannot
+   * read is no longer a route to anywhere: there is no second declaration for it
+   * to be read INSTEAD of, so it lands on the refusal below and says so.
+   */
+  const timesDeclared = declaredTimes.get(ORIGIN_TABLE_NAME) ?? 0;
+  if (timesDeclared > 1) {
+    failures.push(
+      `${ORIGIN_TABLE_FILE} declares ${ORIGIN_TABLE_NAME} ${timesDeclared} times and is meant to declare it once, so which of them decides where a share code travels is not something this can read`,
+    );
+    return { entries, failures };
+  }
+
+  /**
+   * And the declaration itself, read strictly.
+   *
+   * Exactly one match is the only outcome this reads from. None is a table
+   * written in a shape this does not know — including the shape the count above
+   * has just made harmless. More than one cannot happen once that count has
+   * passed, because every match here is a `const NAME =` the count also saw; it
+   * is folded into the same refusal rather than given a branch of its own,
+   * because a branch nothing can reach is a branch nobody can check.
+   */
+  const declarations = [
+    ...text.matchAll(
+      new RegExp(
+        `\\bconst\\s+${ORIGIN_TABLE_NAME}\\s*=\\s*Object\\s*\\.\\s*freeze\\s*\\(\\s*\\{([^}]*)\\}`,
+        'g',
+      ),
+    ),
+  ];
+  if (declarations.length !== 1) {
     failures.push(
       `${ORIGIN_TABLE_FILE} no longer declares ${ORIGIN_TABLE_NAME} as one frozen object literal, so this cannot read it`,
     );
+    return { entries, failures };
+  }
+  const declared = declarations[0];
+  if (declared === undefined) {
+    failures.push(`${ORIGIN_TABLE_FILE} declares ${ORIGIN_TABLE_NAME} in a shape this cannot read it from`);
     return { entries, failures };
   }
 
@@ -1280,24 +1835,79 @@ export function readApiOrigins(root = SHIPPED_TREE) {
   }
 
   /**
-   * One half of an entry, as a value.
+   * The DESTINATION half of an entry, as a value.
+   *
+   * A quoted string, or the name of a string constant declared in the same file.
+   * Both are ordinary ways to write the right-hand side of a property and both
+   * mean the string, so both resolve.
    *
    * @param {string} written
-   * @returns {string | null}
+   * @returns {{ value: string } | { duplicated: string } | { unreadable: string } | null}
    */
-  const valueOf = (written) => {
-    let text = written.trim();
-    const bracketed = /^\[([\s\S]*)\]$/.exec(text);
-    if (bracketed !== null) {
-      text = String(bracketed[1]).trim();
-    }
+  const destinationOf = (written) => {
+    const text = written.trim();
     const quoted = /^(['"])((?:(?!\1).)*)\1$/.exec(text);
     if (quoted !== null) {
-      return String(quoted[2]);
+      return { value: String(quoted[2]) };
     }
     const named = /^([A-Za-z_$][\w$]*)$/.exec(text);
     if (named !== null) {
-      return constants.get(String(named[1])) ?? null;
+      return constantNamed(String(named[1]));
+    }
+    return null;
+  };
+
+  /**
+   * The KEY half, which is not the same question and used to be read as though
+   * it were.
+   *
+   * Two spellings resolve, and they are the two that mean an origin: a computed
+   * key, `[NAME]`, which is the constant's VALUE; and a quoted string, which is
+   * itself. A bare identifier is neither. `{ DEVELOPMENT_ORIGIN: … }` is a
+   * property whose name is the identifier itself — the brackets are what make a
+   * key a value in this language, and without them that entry answers for a page
+   * served from an origin spelled `DEVELOPMENT_ORIGIN`, which is no origin at
+   * all.
+   *
+   * That is not a nicety. Reading a bare key as though it were bracketed, this
+   * check called a table conformant while the module it was reading answered
+   * `null` for the loopback origin — a viewer that makes no request from the one
+   * address the suites serve it at, with the scan green and every entry
+   * apparently in place. Measured, on this file. So a bare identifier is a
+   * failure that names the entry rather than a spelling this quietly resolves.
+   *
+   * `null` for anything else, which the caller reports as an entry it cannot
+   * resolve.
+   *
+   * @param {string} written
+   * @returns {{ key: string } | { unbracketed: string } | { duplicated: string } | { unreadable: string } | null}
+   */
+  const keyOf = (written) => {
+    const text = written.trim();
+    const bracketed = /^\[([\s\S]*)\]$/.exec(text);
+    if (bracketed !== null) {
+      const inside = String(bracketed[1]).trim();
+      const quoted = /^(['"])((?:(?!\1).)*)\1$/.exec(inside);
+      if (quoted !== null) {
+        return { key: String(quoted[2]) };
+      }
+      const named = /^([A-Za-z_$][\w$]*)$/.exec(inside);
+      if (named === null) {
+        return null;
+      }
+      const found = constantNamed(String(named[1]));
+      if (found === null || 'duplicated' in found || 'unreadable' in found) {
+        return found;
+      }
+      return { key: found.value };
+    }
+    const quoted = /^(['"])((?:(?!\1).)*)\1$/.exec(text);
+    if (quoted !== null) {
+      return { key: String(quoted[2]) };
+    }
+    const named = /^([A-Za-z_$][\w$]*)$/.exec(text);
+    if (named !== null && declaredTimes.has(String(named[1]))) {
+      return { unbracketed: String(named[1]) };
     }
     return null;
   };
@@ -1369,17 +1979,94 @@ export function readApiOrigins(root = SHIPPED_TREE) {
       continue;
     }
     const at = Number(colons[0]);
-    const key = valueOf(entry.slice(0, at).trim());
-    const destination = valueOf(entry.slice(at + 1).trim());
-    if (key === null || destination === null) {
+    const read = keyOf(entry.slice(0, at).trim());
+    const destination = destinationOf(entry.slice(at + 1).trim());
+    // A name written twice, on either half. Reported before anything else about
+    // the entry, because the other reports would be about a value this has no
+    // business having chosen.
+    /** @param {string} name */
+    const writtenTwice = (name) =>
+      `${ORIGIN_TABLE_NAME} carries ${JSON.stringify(entry)}, and ${name} is declared more than once in this file, so which spelling it holds is not something this can read`;
+    if (read !== null && 'duplicated' in read) {
+      failures.push(writtenTwice(read.duplicated));
+      continue;
+    }
+    if (destination !== null && 'duplicated' in destination) {
+      failures.push(writtenTwice(destination.duplicated));
+      continue;
+    }
+    // A name declared once and not as a quoted string. This knows the value has
+    // a source and not what the source says, which is a reading that has run out
+    // rather than a table that is wrong — reported as itself, naming the name,
+    // so that the next reader knows which of the two it is looking at.
+    /** @param {string} name */
+    const notALiteral = (name) =>
+      `${ORIGIN_TABLE_NAME} carries ${JSON.stringify(entry)}, and ${name} is declared once but not as a quoted string, so what it holds is not something this can read`;
+    if (read !== null && 'unreadable' in read) {
+      failures.push(notALiteral(read.unreadable));
+      continue;
+    }
+    if (destination !== null && 'unreadable' in destination) {
+      failures.push(notALiteral(destination.unreadable));
+      continue;
+    }
+    if (read !== null && 'unbracketed' in read) {
+      failures.push(
+        `${ORIGIN_TABLE_NAME} carries ${JSON.stringify(entry)}, whose key is the name ${read.unbracketed} rather than the origin it holds — a computed key is written in brackets, and without them this entry answers for no origin at all`,
+      );
+      continue;
+    }
+    if (read === null || destination === null) {
       failures.push(`${ORIGIN_TABLE_NAME} carries ${JSON.stringify(entry)}, whose two halves this cannot resolve`);
       continue;
     }
-    entries.push({ key, destination });
-    if (key !== destination) {
+    // A key already read, before anything collapses it. Two entries under one
+    // origin are one entry at runtime — the later one wins and the earlier is
+    // gone — so a table that looks like it answers two ways answers one, and
+    // which one is a question about evaluation order rather than about a
+    // reviewed decision. Read as source, both are here to be seen, and this is
+    // where they are seen: after this loop they are a `Map` and the first of
+    // them no longer exists to be reported.
+    if (entries.some((one) => one.key === read.key)) {
       failures.push(
-        `${ORIGIN_TABLE_NAME} sends a page served from ${key} to ${destination}, and an origin answers for itself`,
+        `${ORIGIN_TABLE_NAME} carries ${read.key} more than once, and only the last of them decides where that page talks`,
       );
+      continue;
+    }
+    entries.push({ key: read.key, destination: destination.value });
+  }
+
+  // And the pin, over the entries as a whole rather than one at a time. Each of
+  // the three ways a table can differ from the pinned one is reported
+  // separately, and each names what it found: an entry whose destination is not
+  // the pinned one is the slip this reading exists for, an entry under a key the
+  // pin does not carry is an origin nobody reviewed, and a pinned entry that is
+  // absent is a page that will make no request at all from an address this
+  // viewer is served at.
+  //
+  // Skipped when nothing was read, because an unreadable table has already been
+  // reported as unreadable and reporting it a second time as two missing
+  // entries says nothing further.
+  if (failures.length === 0) {
+    const found = new Map(entries.map((one) => [one.key, one.destination]));
+    for (const [key, destination] of Object.entries(ORIGIN_TABLE)) {
+      if (!found.has(key)) {
+        failures.push(`${ORIGIN_TABLE_NAME} no longer carries ${key}, so a page served from there talks to nowhere`);
+        continue;
+      }
+      const answered = found.get(key);
+      if (answered !== destination) {
+        failures.push(
+          `${ORIGIN_TABLE_NAME} sends a page served from ${key} to ${String(answered)} rather than to ${destination}`,
+        );
+      }
+    }
+    for (const one of entries) {
+      if (!Object.prototype.hasOwnProperty.call(ORIGIN_TABLE, one.key)) {
+        failures.push(
+          `${ORIGIN_TABLE_NAME} carries ${one.key}, which is not an origin this viewer is pinned to be served from`,
+        );
+      }
     }
   }
 
@@ -1433,7 +2120,14 @@ export function scanTree(root) {
       for (const rule of RULES) {
         if (!appliesTo(rule, ext)) continue;
         if (exempt(rule, shown)) continue;
-        if (rule.pattern.test(line)) {
+        // Which pattern this file is read with. `pattern` unless the rule names
+        // this exact path, which one rule does and the reason is beside it: a
+        // construct that belongs on one line of one file cannot be told from the
+        // same bytes typed into another file by a reading that never asks which
+        // file it is in. Absent, misspelled or not this tree, the answer is
+        // `pattern` — the narrowest of the set — so an unrecognised file admits
+        // nothing extra.
+        if (patternFor(rule, shown).test(line)) {
           violations.push({
             file: shown,
             line: index + 1,

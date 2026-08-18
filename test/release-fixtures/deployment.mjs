@@ -18,9 +18,20 @@
  * disagreeing is a thing the run notices.
  *
  * The origin table this fixture serves maps its own origin to itself, which is
- * how the committed table treats the development origin. No deployment
- * configuration value appears here or anywhere else in this repository, and a
- * fixture that carried one would be the first.
+ * how the committed table treats the origin a local conformance run is served
+ * from. No deployment configuration value appears in this fixture, and a fixture
+ * that carried one would be the first.
+ *
+ * The repository does now carry exactly TWO, deliberately and in the served
+ * bytes, and they are the same two `CONTRIBUTING.md` names as the rule's only
+ * exceptions. The first is the origin the hosted viewer is served from, which
+ * the committed table is keyed on and which is the address in every share link a
+ * carer receives. The second is the origin its share API answers at, which that
+ * table names because it decides where a share code travels and which the entry
+ * document's policy names because a browser refuses a request the page's own
+ * policy does not permit. Both are public by construction — the first is what a
+ * recipient types, the second rides the `connect-src` of every response the
+ * hosting serves — and they are the only two.
  */
 
 import { sha256Hex } from '../../scripts/release-check-core/digest.mjs';
@@ -130,7 +141,10 @@ export function buildDeployment(origin) {
     ' * Where a page served from this origin is allowed to talk to.',
     ' *',
     ' * One table, exact match, no rule. A fixture copy of the shape the committed',
-    ' * module has: the origin answers for itself, and nothing else answers at all.',
+    " * module's local-conformance entry has: the origin answers for itself, and",
+    ' * nothing else answers at all. The committed table also carries an entry whose',
+    ' * key and destination are different origins; a fixture serves one origin, so',
+    ' * the entry a fixture needs is this one.',
     ' */',
     `const API_ORIGINS = Object.freeze({ ${JSON.stringify(origin)}: ${JSON.stringify(apiOrigin)} });`,
     '',

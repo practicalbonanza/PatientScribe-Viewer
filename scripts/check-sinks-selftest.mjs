@@ -96,6 +96,102 @@ const FIXTURES = fileURLToPath(new URL('../test/sink-fixtures/', import.meta.url
 const CLI = fileURLToPath(new URL('./check-sinks.mjs', import.meta.url));
 
 /**
+ * The one admitted destination that is not admitted between quotes.
+ *
+ * Written out here rather than read back from the partition the scan makes,
+ * because every case below that turns on the partition would otherwise be the
+ * scan agreeing with itself about which side of it each spelling is on. The
+ * spelling is pinned again beside the destination map further down; this is the
+ * name the cases use.
+ *
+ * Why it is on its own is in `check-sinks-core.mjs` beside the admission it has:
+ * it belongs in two served files rather than one, and in the entry document it
+ * sits inside a policy attribute where there is no quote on either side of it.
+ * The cases here read that as two claims — the two positions it is admitted at,
+ * and everywhere else it is not.
+ */
+const API_ORIGIN = 'https://2kcwhm87v5.execute-api.ap-southeast-2.amazonaws.com';
+
+/**
+ * The two contexts that spelling is admitted in, written out here as the bytes
+ * they are.
+ *
+ * Transcribed rather than imported, like every pin in this file: the cases that
+ * transplant these are asking whether an admission is bound to a position, and
+ * an admission asked about itself in its own spelling answers yes whatever it
+ * does. Written out, a transplant is built from what a reader can see, and the
+ * day either context is respelled these cases stop building the thing they are
+ * about — which is a failure that names itself rather than a case that quietly
+ * stopped biting.
+ */
+const API_ORIGIN_CONSTANT = 'HOSTED_DEVELOPMENT_API_ORIGIN';
+
+/** @see API_ORIGIN_CONSTANT */
+const POLICY_ELEMENT_OPEN = '<meta http-equiv="Content-Security-Policy" content="';
+
+/**
+ * The admitted destinations that ARE admitted between quotes, whatever file they
+ * are written in.
+ *
+ * Built from the destination map minus the one above, so a destination added to
+ * that map is swept by every case below without anything here being edited, and
+ * the one entry held out is held out by a name this file wrote down.
+ *
+ * @returns {string[]}
+ */
+function quoteAdmitted() {
+  return Object.keys(ALLOWED_URLS).filter((url) => url !== API_ORIGIN);
+}
+
+/**
+ * Every way a served tree writes its admitted destinations somewhere other than
+ * where they belong.
+ *
+ * The rule, as a reading of any tree rather than as an assertion about one. Each
+ * admitted spelling appears exactly once in each file it belongs to and nowhere
+ * else — which for four of the five is one file each, and for the share API is
+ * two, because the origin table decides where a share code travels and the entry
+ * document's policy has to permit what the table decides.
+ *
+ * Written as a function taking a tree so the cases below can plant a departure
+ * in a copy and read it, rather than asserting a silence over the served tree
+ * and having no way to show that the silence means anything.
+ *
+ * Paths are reported by `countAllowedUrls` relative to this repository, so a
+ * scratch tree's files come back named from wherever the scratch tree is. They
+ * are read back to the tree they are in and spelled the way the destination map
+ * spells them, which is the one form both sides of the comparison can be in.
+ *
+ * @param {string} root The served tree.
+ * @returns {string[]}
+ */
+function outOfPlace(root) {
+  const where = countAllowedUrls(root);
+  const inside = relative(REPO_ROOT, root).split('\\').join('/');
+
+  /** @type {string[]} */
+  const wrong = [];
+  for (const [url, belongs] of Object.entries(ALLOWED_URLS)) {
+    const found = new Map(
+      (where[url] ?? []).map((one) => [`site/${one.file.slice(inside.length + 1)}`, one.count]),
+    );
+    for (const file of belongs) {
+      const count = found.get(file);
+      if (count === undefined) {
+        wrong.push(`${url} is not written in ${file}, which it belongs in`);
+      } else if (count !== 1) {
+        wrong.push(`${url} is written ${count} times in ${file}, and belongs there exactly once`);
+      }
+      found.delete(file);
+    }
+    for (const [file, count] of found) {
+      wrong.push(`${url} is written ${count} times in ${file}, which it does not belong in`);
+    }
+  }
+  return wrong;
+}
+
+/**
  * The three comments the suppression rule names, assembled rather than written.
  *
  * That rule's reach now includes the modules the checks are made of — this file
@@ -599,15 +695,21 @@ test('each destination is admitted where it ends, and nothing longer is admitted
   // link above all, which is the single thing that link is built not to have.
   //
   // Built from the table rather than written out, so these are the destinations
-  // this viewer actually admits rather than three strings that used to be. Read
+  // this viewer actually admits rather than four strings that used to be. Read
   // through a real scan of a real tree rather than through the pattern, because
   // a pattern read out of the rule it belongs to is the rule agreeing with
   // itself.
-  const admitted = Object.keys(ALLOWED_URLS);
-  const [store, policy, origin] = admitted;
+  //
+  // The four admitted between quotes, and not the fifth. The share API is
+  // admitted at two positions rather than wherever a pair of quotes puts it, so
+  // a case that writes each admitted spelling into an arbitrary file and expects
+  // it to go through is a case about these four — and the share API appears in
+  // the refusal list below, which is the same claim read from the other side.
+  const admitted = quoteAdmitted();
+  const [store, policy, origin, hosted] = admitted;
   assert.ok(
-    store !== undefined && policy !== undefined && origin !== undefined,
-    'the admitted destinations are no longer the three this reads',
+    store !== undefined && policy !== undefined && origin !== undefined && hosted !== undefined,
+    'the destinations admitted between quotes are no longer the four this reads',
   );
 
   /**
@@ -662,6 +764,15 @@ test('each destination is admitted where it ends, and nothing longer is admitted
     // was widened to the three spellings a browser accepts.
     ['the admitted destination with one slash leaning the other way', store.replace('https://', 'https:/\\')],
     ['the admitted destination with the other slash leaning', store.replace('https://', 'https:\\/')],
+    // The hosted viewer origin carries a path as readily as the store link does,
+    // and a path on the end of it is a different address entirely.
+    ['a path on the end of the hosted viewer origin', `${hosted}/steal`],
+    // And the fifth destination, which this case is the refusal half of. It is
+    // admitted at a named constant in the origin table's module and at one
+    // position in the entry document's policy, and a line that is neither — a
+    // quoted string in an arbitrary served file, which is exactly what the four
+    // above are admitted as — is not one of them.
+    ['the share API written between quotes where it is not admitted', API_ORIGIN],
   ];
 
   const directory = mkdtempSync(join(tmpdir(), 'sink-selftest-'));
@@ -679,7 +790,7 @@ test('each destination is admitted where it ends, and nothing longer is admitted
     );
 
     admitted.forEach((url, index) => {
-      assert.ok(!onLine.has(index + 1), `${url} is one of the three this viewer names and was refused`);
+      assert.ok(!onLine.has(index + 1), `${url} is one of the four this viewer admits between quotes and was refused`);
     });
     refused.forEach(([what], index) => {
       assert.ok(onLine.has(admitted.length + index + 1), `${what} was admitted`);
@@ -722,7 +833,15 @@ test('no character carries an admitted destination on to somewhere else', () => 
   // characters swept are the ones that end a line: written into a shared file
   // they would not be a character inside a destination at all, which is the one
   // thing this case is not asking about.
-  const admitted = Object.keys(ALLOWED_URLS);
+  //
+  // The four admitted between quotes, swept for the one character that may
+  // follow them; and the share API, swept separately below for the fact that
+  // none may. The two halves are the same reading of two different admissions,
+  // and running them as one sweep would have been asking the wrong question of
+  // one of them: the share API is not admitted in a file like this at all, so
+  // "every character but the quote is refused" is not its shape — "every
+  // character is refused" is.
+  const admitted = quoteAdmitted();
   const quote = "'";
 
   /** @type {string[]} */
@@ -751,6 +870,19 @@ test('no character carries an admitted destination on to somewhere else', () => 
         writeFileSync(join(directory, file), `export const destination = ${quote}${spelling}${quote};\n`);
         swept.push({ file, url, character, spelling });
       }
+    }
+
+    // And the share API, in its own files, over the same characters. It is
+    // admitted at a named constant in one served module and at one position in
+    // the entry document's policy, and this file is neither — so there is no
+    // character, the quote included, that leaves one of these lines admitted.
+    /** @type {string[]} */
+    const apiFiles = [];
+    for (const character of characters) {
+      const spelling = `${API_ORIGIN}${character}@evil.example.invalid/steal`;
+      const file = `api-carried-${apiFiles.length}.js`;
+      writeFileSync(join(directory, file), `export const destination = ${quote}${spelling}${quote};\n`);
+      apiFiles.push(file);
     }
 
     const refusedFiles = new Set(
@@ -791,10 +923,21 @@ test('no character carries an admitted destination on to somewhere else', () => 
     // reaches. One character per destination is the quote the destination was
     // written between, and every other one of them is refused.
     assert.equal(
-      refusedFiles.size,
+      [...refusedFiles].filter((file) => String(file).startsWith('carried-')).length,
       admitted.length * (characters.length - 1),
       'the sweep admitted more than the one character that ends a string, or refused that one as well',
     );
+
+    // The share API's half, which is the same reading with no exception in it.
+    // Named one by one rather than counted, because a count equal to the number
+    // of files is also what a sweep that wrote no files reports.
+    const apiAdmitted = apiFiles.filter((file) => !refusedFiles.has(file));
+    assert.deepEqual(
+      apiAdmitted,
+      [],
+      `the share API was admitted in a file it has no admitted position in, after ${apiAdmitted.length} of the swept characters`,
+    );
+    assert.equal(apiFiles.length, characters.length, 'the share API half of the sweep is not the sweep it says it is');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -804,7 +947,7 @@ test('nothing in front of an admitted destination, and no seam inside one, carri
   // The other two directions, and the reason they are here is the shape of the
   // case above rather than anything it got wrong. That one writes a character
   // AFTER an admitted destination, so every spelling it can build begins with one
-  // of the three — which means the whole of its proof is about suffixes, and two
+  // of the five — which means the whole of its proof is about suffixes, and two
   // shapes it structurally cannot reach were being spoken about as though it
   // covered them.
   //
@@ -819,9 +962,14 @@ test('nothing in front of an admitted destination, and no seam inside one, carri
   //
   // Both readings ask the platform's parser rather than a list, for the reason
   // the case above does: a list is what let the last of these through.
+  // All five here, and not the four the case above sweeps. Both readings below
+  // are inequalities over what a parser says rather than a count of what the
+  // scan admitted, so the entry with the narrower admission is swept by them as
+  // honestly as its siblings: every spelling it can build is refused, and a
+  // refused spelling is one this case has nothing further to ask about.
   const admitted = Object.keys(ALLOWED_URLS);
   const quote = "'";
-  // What a relative destination is read against. One of the three admitted
+  // What a relative destination is read against. One of the five admitted
   // spellings is the origin this project serves from, so it is the base a page
   // carrying any of these would resolve a relative reference against.
   const base = 'http://127.0.0.1:4173/index.html';
@@ -1718,7 +1866,7 @@ test('the invocation that names no tree scans the shipped one', () => {
   }
 });
 
-test('the two requests and the three destinations are where they are allowed to be', () => {
+test('the two requests and the five destinations are where they are allowed to be', async () => {
   // The two claims the rules above cannot make, because a rule reads lines and
   // neither of these is about a line.
   //
@@ -1727,11 +1875,15 @@ test('the two requests and the three destinations are where they are allowed to 
   // construct appears where it is allowed. "Somewhere" is not "twice", and a
   // third request added to that module is a third thing this page sends.
   //
-  // The second is a place. Three destinations are admitted by exact spelling,
-  // and the pattern that admits them admits them anywhere — so a copy of the
-  // policy link assigned in a script would pass the scan while being the one
-  // thing the page is built not to do. This is what says which file each of the
-  // three belongs in, and that each appears once.
+  // The second is a place. Five destinations are admitted by exact spelling.
+  // Four of them are admitted wherever a matching pair of quotes puts them — so
+  // a copy of the policy link assigned in a script would pass the scan while
+  // being the one thing the page is built not to do — and the fifth is admitted
+  // at one position in each of two named files and refused everywhere else,
+  // which says both which file and where inside it. What it does NOT say is how
+  // many: an admission is about a line, and a file can write two of them. This
+  // is what says which file or files each of the five belongs in, and that each
+  // appears exactly once in each of them.
   //
   // Both are written out here rather than read from the module they are about,
   // like every other pin in this repository.
@@ -1750,6 +1902,30 @@ test('the two requests and the three destinations are where they are allowed to 
       other.exceptFiles,
       undefined,
       `${other.id} exempts a file, and only the rule about requests may exempt one`,
+    );
+  }
+
+  // And the other per-file exception, pinned the same way and for the same
+  // reason. `patternIn` reads a named file with a pattern that admits one more
+  // construct than every other file gets, so a second rule quietly growing one
+  // is a second place something is allowed that the rule set does not say out
+  // loud. One rule may have it, these are the files it may name, and each of
+  // them is a served file this repository has.
+  const destinations = RULES.find((one) => one.id === 'external-url');
+  assert.ok(destinations !== undefined, 'the rule that refuses destinations is gone');
+  assert.deepEqual(
+    Object.keys(destinations.patternIn ?? {}).sort(),
+    ['site/index.html', 'site/js/config.js'],
+    'the files read with an admission of their own are not the two pinned here',
+  );
+  for (const other of RULES) {
+    if (other.id === 'external-url') {
+      continue;
+    }
+    assert.equal(
+      other.patternIn,
+      undefined,
+      `${other.id} reads some file with a pattern of its own, and only the rule about destinations may`,
     );
   }
 
@@ -1811,23 +1987,102 @@ test('the two requests and the three destinations are where they are allowed to 
     'a captured request is now caught — good news, and the honesty paragraph in the core and the fixture both call it a miss',
   );
 
-  // And the three destinations, each once, each where it belongs.
+  // And the five destinations, each once in each file it belongs to.
   assert.deepEqual(
     ALLOWED_URLS,
     {
-      'https://apps.apple.com/au/app/id6758035505': 'site/index.html',
-      'https://patientscribe.com.au/privacy-policy': 'site/index.html',
-      'http://127.0.0.1:4173': 'site/js/config.js',
+      'https://apps.apple.com/au/app/id6758035505': ['site/index.html'],
+      'https://patientscribe.com.au/privacy-policy': ['site/index.html'],
+      'http://127.0.0.1:4173': ['site/js/config.js'],
+      'https://d30xbcndd2uqpg.cloudfront.net': ['site/js/config.js'],
+      [API_ORIGIN]: ['site/index.html', 'site/js/config.js'],
     },
     'the destinations this viewer admits have changed, and that is a decision rather than an edit',
   );
-  const where = countAllowedUrls();
-  for (const [url, file] of Object.entries(ALLOWED_URLS)) {
-    assert.deepEqual(
-      where[url],
-      [{ file, count: 1 }],
-      `${url} is not written exactly once in ${file}`,
+  assert.deepEqual(outOfPlace(SHIPPED_TREE), [], 'the served tree does not write its destinations where it says it does');
+
+  // And that reading is a reading. The tree it just passed over is the tree this
+  // repository ships, so a silence there is only worth something if the same
+  // reading has been shown to speak — three departures, planted one at a time in
+  // a copy, none of which the rule set above has a word to say about. That is
+  // why this reading exists.
+  //
+  // The fourth plant is the opposite: a departure this reading is silent about
+  // BY CONSTRUCTION, kept here so the silence is written down rather than
+  // assumed. What answers that one is the admission, and the case that reads it
+  // is the next one in this file — it runs the command line over a planted copy,
+  // because which pattern a file is read with is decided by its path and a tree
+  // scanned in place from somewhere else is not that path.
+  const [store, policy] = quoteAdmitted();
+  assert.ok(store !== undefined && policy !== undefined, 'the destinations the plants below are built from are gone');
+  const placed = mkdtempSync(join(tmpdir(), 'sink-selftest-'));
+  try {
+    const site = join(placed, 'site');
+    cpSync(SHIPPED_TREE, site, { recursive: true });
+    assert.deepEqual(outOfPlace(site), [], 'the copy the plants go into was already out of place before they went in');
+
+    const document = join(site, 'index.html');
+    const table = join(site, 'js', 'config.js');
+    const conforming = { document: readFileSync(document, 'utf8'), table: readFileSync(table, 'utf8') };
+    /** Put the copy back the way it was, so each plant is read on its own. */
+    const restore = () => {
+      writeFileSync(document, conforming.document);
+      writeFileSync(table, conforming.table);
+    };
+
+    // A destination in a file it does not belong to. The spelling is admitted —
+    // it is one of the four admitted between quotes — and the file it is written
+    // into is a served module, so nothing in the rule set has a word to say.
+    writeFileSync(join(site, 'js', 'a-file-this-test-writes.js'), `export const link = '${store}';\n`);
+    assert.ok(
+      outOfPlace(site).some((line) => line.includes(store) && line.includes('a-file-this-test-writes.js')),
+      'an admitted destination written into a file it does not belong to was read as being where it belongs',
     );
+    rmSync(join(site, 'js', 'a-file-this-test-writes.js'));
+
+    // The same destination twice in the file it does belong to. One is the rule;
+    // two is a second link to the same place, which is a second thing to keep
+    // right and a second thing to change when it changes.
+    writeFileSync(document, `${conforming.document}<a href="${policy}"></a>\n`);
+    assert.ok(
+      outOfPlace(site).some((line) => line.includes(policy) && line.includes('2 times')),
+      'an admitted destination written twice in one file was read as being written once',
+    );
+    restore();
+
+    // And missing from a file it belongs to, which is the share API taken out of
+    // the entry document's policy: the table would still send a page there and
+    // the browser would still refuse it.
+    writeFileSync(document, conforming.document.split(` ${API_ORIGIN}`).join(''));
+    assert.ok(
+      outOfPlace(site).some((line) => line.includes(API_ORIGIN) && line.includes('site/index.html')),
+      'the share API taken out of the policy it has to be named in was read as still being there',
+    );
+    restore();
+
+    // And the count's blind spot, which is the whole of what the case below this
+    // one is for: a spelling moved to another position INSIDE a file it belongs
+    // to leaves this reading silent, because one occurrence in the right file is
+    // exactly what it asks for. The share API written into the body in place of
+    // the policy that names it satisfies every line above.
+    writeFileSync(
+      document,
+      conforming.document
+        .split(` ${API_ORIGIN}`)
+        .join('')
+        .split('<p id="unavailable" hidden></p>')
+        .join(`<p id="unavailable" hidden></p>\n      <a href="${API_ORIGIN}"></a>`),
+    );
+    assert.deepEqual(
+      outOfPlace(site),
+      [],
+      'this reading noticed a spelling that moved within the file it belongs to, so the case below is about nothing',
+    );
+    restore();
+
+    assert.deepEqual(outOfPlace(site), [], 'the copy was not put back between plants, so the readings above overlap');
+  } finally {
+    rmSync(placed, { recursive: true, force: true });
   }
 
   // And the third claim, which is neither a count nor a place: what the table of
@@ -1835,40 +2090,258 @@ test('the two requests and the three destinations are where they are allowed to 
   //
   // Everything above is satisfied by a table that sends the wrong pages to the
   // wrong place. The two readings are of spellings and of files: each of the
-  // three destinations is admitted, and each appears once, in the file it
-  // belongs to. A second origin added to that table is admitted by the first as
-  // soon as it is written into `ALLOWED_URLS` — which a reviewed change adding
-  // it would do — and counted by the second as one appearance in `config.js`,
-  // which is where it belongs. Neither of them looks at which key it is under.
+  // five destinations is admitted, and each appears once in each file it belongs
+  // to. An origin added to that table is admitted by the first as soon as it is
+  // written into `ALLOWED_URLS` — which a reviewed change adding it would do —
+  // and counted by the second as one appearance in `config.js`, which is where
+  // it belongs. Neither of them looks at which key it is under.
   //
-  // That is the one edit worth reading for here, because it is the edit going
-  // live is: the table commits one key today, written as one constant used as
-  // both halves so the two cannot come apart, and a second entry is the first
-  // moment they can. `{ [DEVELOPMENT]: DEVELOPMENT, [PRODUCTION]: DEVELOPMENT }`
-  // is one word wrong and every production recipient's access code goes to a
-  // development host, with every reading above unchanged.
+  // Which key it is under is the whole of what decides where a share code goes,
+  // and the table now has an entry where the key and the destination are
+  // different origins — so a rule that every entry answers with itself is no
+  // longer a rule this table can be held to. What holds it instead is the table
+  // written out entry for entry: these keys, these destinations, and nothing
+  // else. `{ [VIEWER]: SOMEWHERE_ELSE }` is one word wrong and every recipient's
+  // access code goes to whatever that is, with every reading above unchanged.
+  //
+  // Written out here rather than read from the module it pins, like every other
+  // pin in this file.
+  /**
+   * The table, written out.
+   *
+   * One transcription, read twice below: once against the bytes the module ships
+   * and once against what the module answers when it runs. Two readings of one
+   * pin rather than two pins, which is the difference between a decision written
+   * down once and a decision that can drift from itself.
+   *
+   * @type {readonly { key: string, destination: string }[]}
+   */
+  const PINNED = [
+    { key: 'http://127.0.0.1:4173', destination: 'http://127.0.0.1:4173' },
+    { key: 'https://d30xbcndd2uqpg.cloudfront.net', destination: API_ORIGIN },
+  ];
+
   const table = readApiOrigins();
+  assert.deepEqual(table.failures, [], 'the served origin table is not the table it is pinned to be');
   assert.deepEqual(
-    table.failures,
-    [],
-    'the served origin table sends a page somewhere other than to the origin it was served from',
+    table.entries,
+    PINNED,
+    'the origin table this viewer serves has changed, and that is a decision rather than an edit',
   );
-  assert.ok(table.entries.length > 0, 'the origin table was read as having no entries, so nothing above was read');
-  for (const entry of table.entries) {
+
+  // And the other truth, which is not the same truth and cannot be read the same
+  // way: what the module ANSWERS.
+  //
+  // Everything above this line reads the served file as text, and reading text
+  // is a thing that can be fooled. It was: a table written into a block comment
+  // above a live wrong one; a constant declared right in a comment and wrong in
+  // code; the same trick with the live declaration written as an identifier
+  // rather than a string, which the reading that counted only quoted
+  // declarations did not count at all. Each of those was closed after it was
+  // found, and each was found by somebody looking — which is the part that does
+  // not scale. What they have in common is not a pattern to widen: it is that a
+  // reading of source is a claim ABOUT a program, and every such claim has a way
+  // to be wrong that the program itself does not.
+  //
+  // So this asks the program. The module is imported and its one exported
+  // function is asked what it answers, for every origin the pin carries and for
+  // named origins it does not. No comment survives being imported and no
+  // declaration shape means anything other than what it evaluates to, so for the
+  // origins asked about, this is the answer and not a claim about the answer.
+  //
+  // What it is NOT is a statement about every origin. A function can only be
+  // asked, and the origins asked here are the pinned ones and a short list of
+  // near misses — so an entry under some other key would answer that key without
+  // any of these questions touching it. Completeness over the whole domain is
+  // the SOURCE layer's claim: the table is read entry by entry and pinned to be
+  // exactly the entries it is, and the readings above refuse a file where which
+  // entries those are cannot be determined. That is why the source reading stays
+  // rather than being replaced by this one.
+  //
+  // The two compose, and they compose because each is weak exactly where the
+  // other is strong: the source layer says WHICH entries exist and can be fooled
+  // about what they hold; this says what they hold and cannot say which exist.
+  // A module could read correctly and answer wrongly, which is what every decoy
+  // above did; a module could answer correctly for everything asked and carry an
+  // entry nobody thought to ask about, which is what the last one did.
+  //
+  // Imported with a query nothing reads, so a second reading in one process is a
+  // second reading rather than the first one handed back. The module is pure —
+  // one frozen table and one total function, no side effects, nothing to reach
+  // the network or the disk — which is why importing it is a measurement rather
+  // than an act. The release check imports the same file for the same reason.
+  const served = new URL('../site/js/config.js', import.meta.url);
+  served.searchParams.set('read', String(Date.now()));
+  const runtime = /**
+   * @type {{
+   *   API_ORIGINS: Readonly<Record<string, string>>,
+   *   apiOriginFor: (origin: unknown) => string | null,
+   * }}
+   */ (await import(served.href));
+
+  // The completeness claim, and this is where it lives now.
+  //
+  // It used to be the source layer's, and the source layer kept losing it — four
+  // times, to four different ways of writing a declaration that a reading of
+  // text sees differently from the way an engine does. The table is exported for
+  // exactly this: asked of the evaluated object, "these entries and no others"
+  // is not a claim about the file, it is the object.
+  //
+  // Every entry, in order, against the transcription above. Order is asserted
+  // rather than sorted away, because an object literal's own order is the order
+  // it is written in and the order it is written in is what a reviewer reads —
+  // an entry that moved is a diff somebody should see.
+  assert.deepEqual(
+    Object.entries(runtime.API_ORIGINS),
+    PINNED.map(({ key, destination }) => [key, destination]),
+    'the table this module evaluates to is not the table it is pinned to be — an entry is missing, extra, or answers somewhere else',
+  );
+
+  // And it cannot be added to after the fact. The table is frozen where it is
+  // declared; asked of the object, that is a property rather than a line
+  // somebody read.
+  assert.ok(
+    Object.isFrozen(runtime.API_ORIGINS),
+    'the table this module evaluates to is not frozen, so anything that imports it can add an entry to it',
+  );
+
+  for (const { key, destination } of PINNED) {
     assert.equal(
-      entry.destination,
-      entry.key,
-      `a page served from ${entry.key} is sent to ${entry.destination}`,
+      runtime.apiOriginFor(key),
+      destination,
+      `a page served from ${key} is answered ${String(runtime.apiOriginFor(key))} at runtime, and the pin says ${destination}`,
     );
   }
 
-  // And the reading is a reading. Two scratch trees, one written the way the
-  // served file is written and one written the way going live goes wrong, so the
-  // refusal above is something this has been shown to produce rather than a
-  // silence nobody has separated from an empty function.
+  // And a short, named list of origins the table does not carry, each of which
+  // has to answer nothing. Finite, and described as finite: this is a handful of
+  // questions to a total function, not a statement about every origin there is —
+  // what says the table holds these entries and no others is the comparison of
+  // the evaluated table above. These are the near misses worth asking anyway: an
+  // origin nobody chose, and every destination that is not itself a key. The
+  // second is the interesting one — the share API is where pages talk TO, and a
+  // table that also answered FOR it would be one line away from letting the
+  // API's own origin ask for codes.
+  const answersFor = new Set(PINNED.map((one) => one.key));
+  const notKeys = [
+    'https://an-origin-this-table-does-not-carry.invalid',
+    ...PINNED.map((one) => one.destination).filter((one) => !answersFor.has(one)),
+  ];
+  for (const origin of notKeys) {
+    assert.equal(
+      runtime.apiOriginFor(origin),
+      null,
+      `a page served from ${origin} is answered at runtime, and the pin carries no entry for it`,
+    );
+  }
+
+  // And the completeness reading is a reading. Two copies of the served module
+  // in a scratch tree, imported the same way the real one just was, so the
+  // silence above is a silence something has been shown to break.
+  //
+  // The first is the construction that ended the source layer's claim to
+  // completeness, written out here as it was found: a conforming table in a
+  // block comment, a live one whose name is followed by a comment before its
+  // `=` — invisible to any reading that expects whitespace there — wrapped in an
+  // extra pair of parentheses, and one more entry keyed through the seam this
+  // repository documents as a miss, so that a page served from a trailing-dot
+  // variant of the reviewed origin gets an answer nobody reviewed. Every source
+  // reading was green on it; both reviewed entries answer correctly, so every
+  // probe of the FUNCTION is green on it too. What is not green is the table.
+  //
+  // The second is the same reading from the other side: an entry taken away.
+  const copies = mkdtempSync(join(tmpdir(), 'sink-selftest-'));
+  try {
+    /**
+     * Import a module written into the scratch tree, and hand back its table.
+     *
+     * @param {string} name
+     * @param {string} body
+     * @returns {Promise<Record<string, string>>}
+     */
+    const tableOf = async (name, body) => {
+      const file = join(copies, name);
+      writeFileSync(file, body);
+      const url = new URL(`file://${file}`);
+      url.searchParams.set('read', String(Date.now()));
+      const module = /** @type {{ API_ORIGINS: Record<string, string> }} */ (await import(url.href));
+      return module.API_ORIGINS;
+    };
+
+    /** @param {readonly string[]} entries */
+    const moduleWith = (entries) =>
+      [
+        "const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';",
+        "const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';",
+        `const HOSTED_DEVELOPMENT_API_ORIGIN = '${API_ORIGIN}';`,
+        '/*',
+        'export const API_ORIGINS = Object.freeze({',
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,',
+        '});',
+        '*/',
+        `export const API_ORIGINS${'/*live*'}/ = Object.freeze(({`,
+        ...entries,
+        '}));',
+        '',
+      ].join('\n');
+
+    const withExtra = await tableOf(
+      'with-extra.mjs',
+      moduleWith([
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,',
+        "  [HOSTED_DEVELOPMENT_ORIGIN + '.']: HOSTED_DEVELOPMENT_API_ORIGIN,",
+      ]),
+    );
+    assert.notDeepEqual(
+      Object.entries(withExtra),
+      PINNED.map(({ key, destination }) => [key, destination]),
+      'a table carrying an entry the pin does not is equal to the pin, so the comparison above is not one',
+    );
+    // And the entry it carries is nameable, which is what the failure above
+    // would print: the reviewed origin with one character on the end of it.
+    assert.ok(
+      Object.keys(withExtra).includes('https://d30xbcndd2uqpg.cloudfront.net.'),
+      'the construction this control is built from no longer carries the unreviewed entry it is about',
+    );
+
+    const withMissing = await tableOf(
+      'with-missing.mjs',
+      moduleWith(['  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,']),
+    );
+    assert.notDeepEqual(
+      Object.entries(withMissing),
+      PINNED.map(({ key, destination }) => [key, destination]),
+      'a table missing a pinned entry is equal to the pin, so the comparison above is not one',
+    );
+  } finally {
+    rmSync(copies, { recursive: true, force: true });
+  }
+
+  // And the reading is a reading. Eleven scratch trees, each a shape a served
+  // module can be written in: the conforming one; the three ways a table can
+  // differ from the pinned one — a destination that is not the pinned one, an
+  // entry nobody pinned, a pinned entry that is gone; the two ways an entry can
+  // be written so that it says something other than what it appears to — a key
+  // that is a bare name rather than a value, and one origin under two entries;
+  // the two decoys, where the file declares the table twice or a constant twice
+  // and the reading used to take whichever came first or last; and the shape
+  // this cannot take apart at all. Each refusal is something this has been shown
+  // to produce rather than a silence nobody has separated from an empty
+  // function.
   const tables = mkdtempSync(join(tmpdir(), 'sink-selftest-'));
   try {
-    /** @param {string} body @returns {{ entries: unknown[], failures: string[] }} */
+    /**
+     * The reading, over a scratch tree written from `body`.
+     *
+     * Typed as what it hands back rather than as `unknown[]`, because one of
+     * the cases below reads an entry's key: a bare identifier must not have
+     * become an origin, and saying so means naming the field.
+     *
+     * @param {string} body
+     * @returns {{ entries: { key: string, destination: string }[], failures: string[] }}
+     */
     const readWith = (body) => {
       const js = join(tables, 'site', 'js');
       mkdirSync(js, { recursive: true });
@@ -1876,59 +2349,258 @@ test('the two requests and the three destinations are where they are allowed to 
       return readApiOrigins(join(tables, 'site'));
     };
 
-    const wellFormed = readWith(
-      [
-        "const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';",
-        "const PRODUCTION_ORIGIN = 'https://viewer.example';",
-        'const API_ORIGINS = Object.freeze({',
-        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
-        '  [PRODUCTION_ORIGIN]: PRODUCTION_ORIGIN,',
-        '});',
-        '',
-      ].join('\n'),
-    );
-    assert.deepEqual(wellFormed.failures, [], 'a table where every origin answers for itself was refused');
+    /**
+     * The served table's own shape, as lines, with the second entry's
+     * destination left to the caller.
+     *
+     * @param {string} destination
+     * @returns {string[]}
+     */
+    const asServed = (destination) => [
+      "const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';",
+      "const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';",
+      `const HOSTED_DEVELOPMENT_API_ORIGIN = '${destination}';`,
+      'const API_ORIGINS = Object.freeze({',
+      '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+      '  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,',
+      '});',
+      '',
+    ];
+
+    const wellFormed = readWith(asServed(API_ORIGIN).join('\n'));
+    assert.deepEqual(wellFormed.failures, [], 'the table this viewer serves was refused by the pin it is meant to satisfy');
     assert.deepEqual(wellFormed.entries, [
       { key: 'http://127.0.0.1:4173', destination: 'http://127.0.0.1:4173' },
-      { key: 'https://viewer.example', destination: 'https://viewer.example' },
+      { key: 'https://d30xbcndd2uqpg.cloudfront.net', destination: API_ORIGIN },
     ]);
 
-    const goingLive = readWith(
-      [
-        "const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';",
-        "const PRODUCTION_ORIGIN = 'https://viewer.example';",
-        'const API_ORIGINS = Object.freeze({',
-        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
-        '  [PRODUCTION_ORIGIN]: DEVELOPMENT_ORIGIN,',
-        '});',
-        '',
-      ].join('\n'),
-    );
+    // The one word. Every reading above this is unchanged by it: the spelling is
+    // an admitted destination, it appears once in the file it belongs to, and
+    // the table is one frozen object literal of entries this can take apart.
+    const goingWrong = readWith(asServed('https://elsewhere.example').join('\n'));
     assert.ok(
-      goingLive.failures.some(
-        (line) => line.includes('https://viewer.example') && line.includes('http://127.0.0.1:4173'),
+      goingWrong.failures.some(
+        (line) => line.includes('https://d30xbcndd2uqpg.cloudfront.net') && line.includes('https://elsewhere.example'),
       ),
-      `the one-word edit that sends production somewhere else was read as well formed:\n${goingLive.failures.join('\n')}`,
+      `the one-word edit that sends a viewer's codes somewhere else was read as well formed:\n${goingWrong.failures.join('\n')}`,
     );
 
-    // The same entry written out in full rather than through a constant, which
-    // is the other way that edit can be spelled — and the one where the
-    // separator between the two halves is not the first colon on the line or the
-    // last.
-    const spelledOut = readWith(
+    // An entry nobody pinned. A key that answers is a page that makes a request,
+    // and a page served from an address no reviewed change named is a page this
+    // table should answer nothing for.
+    const extra = readWith(
       [
-        'const API_ORIGINS = Object.freeze({',
-        "  'https://viewer.example': 'http://127.0.0.1:4173',",
+        ...asServed(API_ORIGIN).slice(0, -2),
+        "  'https://viewer.example': 'https://viewer.example',",
         '});',
         '',
       ].join('\n'),
     );
     assert.ok(
-      spelledOut.failures.some(
-        (line) => line.includes('https://viewer.example') && line.includes('http://127.0.0.1:4173'),
-      ),
-      `the same edit written out in full was read as well formed:\n${spelledOut.failures.join('\n')}`,
+      extra.failures.some((line) => line.includes('https://viewer.example')),
+      `an entry the pin does not carry was read as well formed:\n${extra.failures.join('\n')}`,
     );
+
+    // And a pinned entry that is gone, which is the same edit read from the
+    // other side: the viewer would be served from an address its own table
+    // answers nothing for, and every request it wants to make would never be
+    // built. Written out in full rather than through a constant, which is the
+    // other way an entry can be spelled — and the one where the separator
+    // between the two halves is not the first colon on the line or the last.
+    const missing = readWith(
+      [
+        'const API_ORIGINS = Object.freeze({',
+        "  'http://127.0.0.1:4173': 'http://127.0.0.1:4173',",
+        '});',
+        '',
+      ].join('\n'),
+    );
+    assert.ok(
+      missing.failures.some((line) => line.includes('https://d30xbcndd2uqpg.cloudfront.net')),
+      `a table missing the entry a hosted viewer is served under was read as well formed:\n${missing.failures.join('\n')}`,
+    );
+
+    // A key that is not a key. `{ DEVELOPMENT_ORIGIN: … }` is a property whose
+    // name is the identifier itself — the brackets are what make a key a value
+    // in this language — so the table answers for a page served from an origin
+    // spelled with those letters, which is no origin. Read as though the
+    // brackets were there, this check called the served module conformant while
+    // the module answered nothing at all for the origin every suite serves it
+    // at: a viewer that makes no request, with the scan green and the entry
+    // apparently in place. The failure names the entry and says which spelling
+    // it read.
+    const bareKey = readWith(
+      asServed(API_ORIGIN)
+        .join('\n')
+        .split('  [DEVELOPMENT_ORIGIN]:')
+        .join('  DEVELOPMENT_ORIGIN:'),
+    );
+    assert.ok(
+      bareKey.failures.some((line) => line.includes('DEVELOPMENT_ORIGIN') && line.includes('brackets')),
+      `a bare identifier key was resolved as though it were bracketed:\n${bareKey.failures.join('\n')}`,
+    );
+    // And it is refused as a key rather than resolved to something wrong: the
+    // entry is not read at all, so no origin is recorded under it and the pinned
+    // entry it was meant to be is not standing there.
+    //
+    // The pin itself is skipped on this table — an entry that could not be read
+    // is reported as unreadable and is not reported a second time as an entry
+    // that is missing — so what is asserted here is what the reading produced,
+    // not a second failure alongside it.
+    assert.ok(
+      bareKey.entries.every((one) => one.key !== 'http://127.0.0.1:4173'),
+      'the bare key was read as the origin it names rather than as the name it is',
+    );
+
+    // Two entries under one origin. At runtime the later wins and the earlier is
+    // gone, so this is not a wrong answer the browser gives — it is a table that
+    // reads like a decision and is not one, and the reading that collapses them
+    // into a map is the reading that can no longer see it. Refused before the
+    // collapse, which is the only place it is visible.
+    const duplicated = readWith(
+      [
+        ...asServed(API_ORIGIN).slice(0, -2),
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '});',
+        '',
+      ].join('\n'),
+    );
+    assert.ok(
+      duplicated.failures.some((line) => line.includes('http://127.0.0.1:4173') && line.includes('more than once')),
+      `a table carrying one origin twice was read as a table of distinct entries:\n${duplicated.failures.join('\n')}`,
+    );
+
+    // A conforming table written into a block comment, above a live one that is
+    // wrong. This is the direction every reading above is blind to and the one
+    // that matters most: the file declares the table twice, the first of them
+    // is the comment, and a reading that took the first match read the comment
+    // and reported it. Measured before this refusal existed, the whole of this
+    // file stayed green while the module sent a hosted viewer's share codes to
+    // the loopback. Nothing here parses JavaScript; what closes it is that a
+    // module declares this table once, so twice is a file this cannot read.
+    const commentedDecoy = readWith(
+      [
+        "const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';",
+        "const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';",
+        `const HOSTED_DEVELOPMENT_API_ORIGIN = '${API_ORIGIN}';`,
+        '/*',
+        'const API_ORIGINS = Object.freeze({',
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,',
+        '});',
+        '*/',
+        'const API_ORIGINS = Object.freeze({',
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '  [HOSTED_DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '});',
+        '',
+      ].join('\n'),
+    );
+    assert.ok(
+      commentedDecoy.failures.some((line) => line.includes('2 times') && line.includes('declare it once')),
+      `a file declaring the table twice was read as a file declaring it once:\n${commentedDecoy.failures.join('\n')}`,
+    );
+    // And nothing was read out of either of them, so no reading below the
+    // locator got to speak about a table this could not identify.
+    assert.deepEqual(commentedDecoy.entries, [], 'a table this cannot identify was still read entry by entry');
+
+    // The same trick on a constant instead of the table: the live declaration is
+    // wrong and the right spelling follows it inside a comment. The map of
+    // constants was built from raw text and the later write won, so the name
+    // resolved to the spelling that is not running. The table around it is
+    // conforming, which is what makes this the harder half — every other reading
+    // here is satisfied.
+    const constantDecoy = readWith(
+      [
+        "const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';",
+        "const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';",
+        "const HOSTED_DEVELOPMENT_API_ORIGIN = 'https://elsewhere.example';",
+        '/*',
+        `const HOSTED_DEVELOPMENT_API_ORIGIN = '${API_ORIGIN}';`,
+        '*/',
+        'const API_ORIGINS = Object.freeze({',
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,',
+        '});',
+        '',
+      ].join('\n'),
+    );
+    assert.ok(
+      constantDecoy.failures.some(
+        (line) => line.includes('HOSTED_DEVELOPMENT_API_ORIGIN') && line.includes('more than once'),
+      ),
+      `a constant declared twice was resolved to one of its spellings:\n${constantDecoy.failures.join('\n')}`,
+    );
+    // And it resolved to neither: the entry is refused rather than read as the
+    // spelling that happened to come last.
+    assert.deepEqual(
+      constantDecoy.entries.filter((one) => one.key === 'https://d30xbcndd2uqpg.cloudfront.net'),
+      [],
+      'the duplicated constant was resolved anyway, to whichever spelling came last',
+    );
+
+    // The decoy again, and this time the live table is written in a shape the
+    // strict reader cannot see: one extra pair of parentheses around the object,
+    // which changes nothing about what runs and everything about what a
+    // shape-strict pattern matches. That is the asymmetry in its last hiding
+    // place — a reading that counts only what it can already read counts a
+    // comment as the whole file, and the live table underneath is free to carry
+    // an entry nobody reviewed. The extra entry here is written through the seam
+    // this module documents as a miss, `[NAME + '.']`, so that a page served
+    // from a variant of the reviewed origin answers the loopback while both
+    // reviewed entries stay correct — which is why nothing that probes the
+    // reviewed entries notices.
+    //
+    // Counted by the left-hand side, it is two declarations, and two is a file
+    // this cannot read.
+    const shapeDecoy = readWith(
+      [
+        "const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';",
+        "const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';",
+        `const HOSTED_DEVELOPMENT_API_ORIGIN = '${API_ORIGIN}';`,
+        '/*',
+        'const API_ORIGINS = Object.freeze({',
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,',
+        '});',
+        '*/',
+        'const API_ORIGINS = Object.freeze(({',
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,',
+        "  [HOSTED_DEVELOPMENT_ORIGIN + '.']: DEVELOPMENT_ORIGIN,",
+        '}));',
+        '',
+      ].join('\n'),
+    );
+    assert.ok(
+      shapeDecoy.failures.some((line) => line.includes('2 times') && line.includes('declare it once')),
+      `a table declared twice in two different shapes was read as a table declared once:\n${shapeDecoy.failures.join('\n')}`,
+    );
+    assert.deepEqual(shapeDecoy.entries, [], 'a table this cannot identify was still read entry by entry');
+
+    // And the same live shape with no decoy above it, which is the route the
+    // count above does not close and does not need to: with nothing for the
+    // strict reader to read INSTEAD, it reads nothing and says so. Written out
+    // because "the other route is already closed" is a claim worth a case rather
+    // than a sentence.
+    const unreadableShape = readWith(
+      [
+        "const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';",
+        "const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';",
+        `const HOSTED_DEVELOPMENT_API_ORIGIN = '${API_ORIGIN}';`,
+        'const API_ORIGINS = Object.freeze(({',
+        '  [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,',
+        '  [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,',
+        "  [HOSTED_DEVELOPMENT_ORIGIN + '.']: DEVELOPMENT_ORIGIN,",
+        '}));',
+        '',
+      ].join('\n'),
+    );
+    assert.ok(
+      unreadableShape.failures.some((line) => line.includes('this cannot read it')),
+      `a table written in a shape this does not read was read anyway:\n${unreadableShape.failures.join('\n')}`,
+    );
+    assert.deepEqual(unreadableShape.entries, [], 'a table this cannot read was still read entry by entry');
 
     // And a table this cannot take apart is a reason rather than a silence: a
     // reading that skipped what it did not understand would report nothing at
@@ -1940,6 +2612,238 @@ test('the two requests and the three destinations are where they are allowed to 
     );
   } finally {
     rmSync(tables, { recursive: true, force: true });
+  }
+});
+
+test('each position the share API is admitted at is a position in one named file', () => {
+  // The claim the admission makes about itself, read as the two words it is
+  // made of: a POSITION, in a named FILE.
+  //
+  // What this exists for is a defect that had every other reading in this
+  // repository green. The two admissions are byte context — the bytes around
+  // the spelling, written into a pattern — and bytes travel. Composed into one
+  // alternation applied to every served file, each admission was admitted
+  // wherever its anchor bytes were typed: the policy context pasted into a
+  // comment in the origin table's module went through, and, worse, the policy
+  // context pasted into a `title` attribute in the entry document's own BODY
+  // went through with the real policy occurrence deleted — a page carrying an
+  // inert attribute where it used to carry the permission to reach its own API,
+  // with the count satisfied (one occurrence, in a file it belongs to), the
+  // table pin satisfied (the table is untouched), and the scan exiting 0.
+  //
+  // So the cases below are transplants. Each takes an admission's context and
+  // puts it somewhere that is not its position, and each has to be refused BY
+  // THE SCAN, on its own, with no other reading consulted.
+  //
+  // Through the command line over a copy of the tree rather than through
+  // `scanTree` in place, and that is not a stylistic choice: which pattern a
+  // file is read with is decided by its repository-relative path, and a scratch
+  // tree scanned from somewhere else has a path no admission names — so every
+  // case here would be refused for the wrong reason and pass by accident. The
+  // copy `copyOfTheCheck` makes carries the check with it, so the paths inside
+  // it are the paths the served tree has.
+  const directory = mkdtempSync(join(tmpdir(), 'sink-selftest-'));
+  try {
+    const cli = copyOfTheCheck(directory);
+    const document = join(directory, 'site', 'index.html');
+    const table = join(directory, 'site', 'js', 'config.js');
+    const conforming = { document: readFileSync(document, 'utf8'), table: readFileSync(table, 'utf8') };
+    /** Put the copy back, so each transplant is read on its own. */
+    const restore = () => {
+      writeFileSync(document, conforming.document);
+      writeFileSync(table, conforming.table);
+    };
+
+    // The green direction, and it is the one that makes the rest of them mean
+    // something: over the conforming copy both REAL positions are admitted and
+    // the scan exits 0. Every case below differs from this by one transplant.
+    assert.equal(runCli(null, cli).status, 0, 'the two real positions are no longer admitted where the served tree writes them');
+    // And they are genuinely being admitted rather than being lines nothing
+    // looks at: each of the two carries the spelling, and the pattern every
+    // other file is read with refuses both. That is what the transplants below
+    // measure from.
+    assert.ok(conforming.document.includes(API_ORIGIN), 'the entry document no longer carries the share API at all');
+    assert.ok(conforming.table.includes(API_ORIGIN), 'the origin table no longer carries the share API at all');
+
+    /**
+     * The command line over the copy, as the file it named and the rule it fired.
+     *
+     * @param {string} what
+     */
+    const refused = (what) => {
+      const run = runCli(null, cli);
+      assert.equal(run.status, 1, `${what} was admitted:\n${run.stdout}`);
+      assert.ok(run.stdout.includes('external-url'), `${what} was refused by some other rule:\n${run.stdout}`);
+      return run.stdout;
+    };
+
+    // The transplant that had everything else green. The real policy occurrence
+    // is deleted and the same directive bytes are written into an attribute in
+    // the body, so the file carries the spelling exactly once and carries it
+    // nowhere a browser reads a policy from.
+    writeFileSync(
+      document,
+      conforming.document
+        .split(` ${API_ORIGIN}`)
+        .join('')
+        .split('<p id="unavailable" hidden></p>')
+        .join(`<p id="unavailable" hidden></p>\n      <a title="connect-src 'self' ${API_ORIGIN};"></a>`),
+    );
+    assert.ok(
+      refused('the policy context written into an attribute in the body of the entry document').includes('site/index.html'),
+      'the transplant was refused somewhere other than the file it was written into',
+    );
+    restore();
+
+    // The policy context in the other file the share API belongs in. It belongs
+    // there — at the declaration, on one line — and this is not that line, so
+    // the file it belongs in does not make it admitted.
+    writeFileSync(table, `${conforming.table}// connect-src 'self' ${API_ORIGIN}; style-src\n`);
+    assert.ok(
+      refused("the policy context written into a comment in the origin table's module").includes('site/js/config.js'),
+      'the transplant was refused somewhere other than the file it was written into',
+    );
+    restore();
+
+    // And the other way round: the declaration context inside the entry
+    // document, with the real policy occurrence removed so the count is
+    // satisfied there too.
+    writeFileSync(
+      document,
+      conforming.document
+        .split(` ${API_ORIGIN}`)
+        .join('')
+        .split('  </body>')
+        .join(`const ${API_ORIGIN_CONSTANT} = '${API_ORIGIN}';\n  </body>`),
+    );
+    assert.ok(
+      refused('the declaration context written into the entry document').includes('site/index.html'),
+      'the transplant was refused somewhere other than the file it was written into',
+    );
+    restore();
+
+    // Both contexts in a third served module, which is a file neither admission
+    // names. This is the fail-closed direction: a file the admission does not
+    // know about is a file where nothing extra is admitted, so both of them are
+    // refused here even though each is a real position somewhere else.
+    const elsewhere = join(directory, 'site', 'js', 'a-file-this-test-writes.js');
+    for (const [what, line] of /** @type {readonly [string, string][]} */ ([
+      ['the policy context in a third served module', `// ${POLICY_ELEMENT_OPEN}connect-src 'self' ${API_ORIGIN}; x" />`],
+      ['the declaration context in a third served module', `const ${API_ORIGIN_CONSTANT} = '${API_ORIGIN}';`],
+    ])) {
+      writeFileSync(elsewhere, `${line}\n`);
+      assert.ok(
+        refused(what).includes('a-file-this-test-writes.js'),
+        'the transplant was refused somewhere other than the file it was written into',
+      );
+    }
+    rmSync(elsewhere);
+
+    // And the position inside the policy is still a position: the spelling with
+    // one more character of a URL on it, where the real one sits, is a different
+    // destination and the directive would permit it.
+    writeFileSync(document, conforming.document.split(`${API_ORIGIN};`).join(`${API_ORIGIN}.evil.invalid;`));
+    assert.ok(
+      refused('a longer destination at the policy position').includes('site/index.html'),
+      'the transplant was refused somewhere other than the file it was written into',
+    );
+    restore();
+
+    // The directive name, which is where a reading that matches a literal rather
+    // than a directive goes wrong. `connect-src` is a suffix of `xconnect-src`,
+    // and `xconnect-src` is not a directive: a browser skips it whole, the
+    // policy names the share API nowhere, and the page loses the permission it
+    // was written to have. Every byte around the spelling is the byte the
+    // position wants, and the position is still not the position.
+    writeFileSync(document, conforming.document.split(" connect-src 'self' ").join(" xconnect-src 'self' "));
+    assert.ok(
+      refused('the share API inside a directive whose name merely ends in the real one').includes('site/index.html'),
+      'the transplant was refused somewhere other than the file it was written into',
+    );
+    restore();
+
+    // The three shapes that say the admissions are anchored to a whole line
+    // rather than to bytes anywhere on one. Each is inside the file whose
+    // position it borrows — file-awareness has nothing to say about any of them,
+    // and each was admitted by a version of this that named the file and stopped
+    // there.
+    for (const [what, line] of /** @type {readonly [string, string][]} */ ([
+      // A declaration a documentation comment carries, which is the shape a
+      // module writes when it is describing itself.
+      ['the declaration inside a documentation comment', ` * const ${API_ORIGIN_CONSTANT} = '${API_ORIGIN}';`],
+      // The same declaration with something in front of it on the line.
+      ['the declaration written mid-line', `export const x = 1; const ${API_ORIGIN_CONSTANT} = '${API_ORIGIN}';`],
+      // And the same declaration with something after the semicolon that ends
+      // it, which is what the end-of-line half of the anchor is for.
+      ['the declaration with content after its semicolon', `const ${API_ORIGIN_CONSTANT} = '${API_ORIGIN}'; // and more`],
+    ])) {
+      writeFileSync(table, `${conforming.table}${line}\n`);
+      assert.ok(refused(what).includes('site/js/config.js'), 'the transplant was refused somewhere other than the file it was written into');
+      restore();
+    }
+
+    // And the entry document's half of the same claim: the whole policy element,
+    // spelled correctly, carried by a line that does not begin with it.
+    writeFileSync(
+      document,
+      `${conforming.document}<p></p>${POLICY_ELEMENT_OPEN}default-src 'self'; connect-src 'self' ${API_ORIGIN}; x" />\n`,
+    );
+    assert.ok(
+      refused('a whole policy element written mid-line').includes('site/index.html'),
+      'the transplant was refused somewhere other than the file it was written into',
+    );
+    restore();
+
+    // A second file of the same NAME at another path, carrying the real
+    // declaration on a real line of its own. Everything about it is the admitted
+    // position except the path, and the path is the whole of what an admission
+    // is named under — so a lookup that compared the last segment rather than
+    // the whole of it would admit this, and every served tree could then grow
+    // its own `config.js` saying where a share code goes.
+    const nested = join(directory, 'site', 'js', 'nested');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, 'config.js'), `const ${API_ORIGIN_CONSTANT} = '${API_ORIGIN}';\n`);
+    assert.ok(
+      refused('the declaration in a second file of the same name at another path').includes('site/js/nested/config.js'),
+      'the transplant was refused somewhere other than the file it was written into',
+    );
+    rmSync(nested, { recursive: true, force: true });
+
+    // And the documented miss, measured rather than described, so the paragraph
+    // in `check-sinks-core.mjs` that names it is a paragraph somebody can check.
+    //
+    // The class is enclosure: an admitted line reproduced exactly is admitted,
+    // and what encloses it is never on it. A `<template>` is the member worth
+    // writing down here rather than a comment, because a comment is obviously
+    // inert and a template is not — the browser parses what is inside one and
+    // then applies none of it, so a policy element in a template is a real
+    // element that governs nothing.
+    //
+    // Two readings, in one plant. The scan admits it, which is the miss. The
+    // count refuses it, which is the bound the paragraph claims — this line is a
+    // second occurrence of the spelling in a file that may carry it once, and
+    // that is what the rest of the gate has instead of a parser.
+    writeFileSync(
+      document,
+      conforming.document.split('  </body>').join(
+        ['  <template>', `    ${conforming.document.split('\n')[4] ?? ''}`.trimEnd(), '  </template>', '  </body>'].join('\n'),
+      ),
+    );
+    assert.equal(
+      runCli(null, cli).status,
+      0,
+      'the enclosed copy of the policy element was refused, so the known-miss paragraph in the core describes something that is not true',
+    );
+    assert.ok(
+      outOfPlace(join(directory, 'site')).some((line) => line.includes(API_ORIGIN) && line.includes('2 times')),
+      'the enclosed copy was not counted, so the bound the known-miss paragraph claims is not there',
+    );
+    restore();
+
+    // Back to green, so the restoring above is doing what the cases assume.
+    assert.equal(runCli(null, cli).status, 0, 'the copy was not put back between transplants, so the cases above overlap');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

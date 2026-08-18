@@ -339,7 +339,8 @@ export const SUITES = Object.freeze({
         'the command line exits 0 on a clean tree',
         'the command line exits 2 on a missing tree',
         'the invocation that names no tree scans the shipped one',
-        'the two requests and the three destinations are where they are allowed to be',
+        'the two requests and the five destinations are where they are allowed to be',
+        'each position the share API is admitted at is a position in one named file',
         'the command line still scans when reached through a symlinked path',
       ]),
       'run-browser-tests-selftest.mjs': Object.freeze([

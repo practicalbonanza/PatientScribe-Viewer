@@ -13,6 +13,22 @@
  * kind of thing that stays true for as long as everyone remembers it and then
  * quietly stops.
  *
+ * One deploy-time value is an exception to the second half of that, and it is
+ * named here rather than taught to the code below. `ApiOrigin` is supplied from
+ * the overlay like the others and is public by design: it rides the
+ * `connect-src` of the security policy on every response the hosting serves, and
+ * the served bytes carry it too — in the committed origin table, which decides
+ * where a share code travels, and in the entry document's own policy, which has
+ * to permit what that table decides. So an overlay-present run reports it at
+ * every file that carries it, and those reports are an expected set that is
+ * adjudicated at review. No allowlist is added for it: the allowlist here is
+ * consulted only for the pattern rules, overlay values are reported
+ * unconditionally, and which parameter a value came from is not carried this far
+ * — so an entry that looked like it held would in fact have said nothing at all
+ * about a CHANGED value. What catches that is the release check, which derives
+ * its expected `connect-src` from the committed table and compares it against
+ * the live response header.
+ *
  * The file set is `git ls-files --cached --others --exclude-standard`: the
  * tracked tree, plus every untracked file that is not ignored. The second half
  * matters more than it looks. A scan of the tracked tree alone would say nothing

@@ -71,9 +71,38 @@ const ROOT_ID = 'viewer-root';
  * enforced as it is spelled: a directive dropped, renamed, reordered or given a
  * source it did not have is a different policy, and the page is meant to carry
  * exactly this one.
+ *
+ * One directive names an origin outside this page, and it is the only one. A
+ * browser handed both this policy and the one the hosting sets in a response
+ * header enforces the INTERSECTION of the two — so a `connect-src` here naming
+ * `'self'` alone would refuse the request the committed origin table decides on,
+ * whatever the header permitted, and the wire half of the release check would
+ * never see it because it reads headers and does not parse the document. The
+ * source written here is the share API that table sends a page to. Nothing else
+ * about the page is loosened by it: every other directive is `'self'` or
+ * `'none'`, and the table remains the only thing that decides whether a request
+ * is built at all.
+ *
+ * Written across two lines because the string is long, and joined rather than
+ * left as one line so the policy is still one string with one spelling. What is
+ * compared is the value, and the value is what the page carries byte for byte.
  */
 const POLICY =
-  "default-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'";
+  "default-src 'self'; connect-src 'self' https://2kcwhm87v5.execute-api.ap-southeast-2.amazonaws.com; " +
+  "style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'";
+
+/**
+ * The one source that policy names which is not `'self'`, read back out of it.
+ *
+ * Read rather than written, and that is the whole point of it. The policy above
+ * is this file's single transcription of the page's policy — `SAFE_PREFIX`, the
+ * element inventory and the expected violation report are all built from it — so
+ * a second spelling of the share API here would be a second thing to keep in
+ * step with `site/index.html`, and the first place the two could silently
+ * disagree. Taking it out of the string that was already agreed keeps the count
+ * at one.
+ */
+const POLICY_CONNECT_ORIGIN = String(/connect-src 'self' ([^;]+);/.exec(POLICY)?.[1] ?? '');
 
 /**
  * The page from its first byte to the end of the policy, written out.
@@ -325,8 +354,13 @@ const ROOT_LOOKUPS = '__viewerRootLookups';
  * All three are the same kind of thing: a change to a served file rather than a
  * silent one, visible in a diff, and answered at runtime by CSP — `style-src` and
  * `img-src` for what a stylesheet fetches, `connect-src` for what leaves the
- * page — which the page carries itself, as the `'self'` policy pinned in the
- * inventory below and read for its effect at the end of this file. The
+ * page — which the page carries itself, as the policy pinned in the inventory
+ * below and read for its effect at the end of this file. One directive in that
+ * policy names an origin outside this page and it is the only one: `connect-src`
+ * also names the share API the committed origin table sends a page to, because a
+ * browser enforces the intersection of this policy and the one the hosting sets,
+ * and a request the table decides on has to be permitted by both. The rest name
+ * `'self'` or `'none'`. The
  * directives a page cannot carry still arrive with the deploy configuration.
  * What is written here is where these reads stop, not a list anybody should read
  * as finished.
@@ -1063,4 +1097,158 @@ test('the policy the page carries is enforced against an origin that answers', a
       'Content Security Policy',
     );
   }
+});
+
+/**
+ * The other half of that reading, and the one the fold this file's policy just
+ * had was made for.
+ *
+ * The test above asks whether the policy refuses an origin it does not name.
+ * This one asks whether it PERMITS the one origin it does — which is not the
+ * same question, and until the policy named something it could not be asked at
+ * all. It matters because of how the two policies this page ends up under
+ * combine: the hosting sets `connect-src` in a response header, the document
+ * carries its own in a meta element, and a browser enforces the INTERSECTION of
+ * every policy it is handed. A meta naming `'self'` alone would therefore refuse
+ * the request the committed origin table decides on however the header was
+ * written, and nothing on the wire side of the release check could see it —
+ * that check reads response headers and never parses the document. A browser
+ * is the only thing that can, and this is it.
+ *
+ * No byte leaves the machine, and that is a property of how this is measured
+ * rather than a hope. The harness routes every request the page makes before the
+ * network is reached, so any of the two destinations below that BECOMES a
+ * request is answered by the harness and never resolved, connected to or sent
+ * anything — and the one the policy refuses never becomes a request at all,
+ * which is the asymmetry the paragraph below reads. Either way nothing goes out:
+ * the share API is not contacted by this suite at any point.
+ *
+ * What is read is the interception itself, because the asymmetry IS the
+ * measurement: a fetch the policy permits becomes a request, and a request is
+ * something the route handler sees; a fetch the policy refuses never becomes a
+ * request at all, so the handler is never reached and there is nothing to
+ * intercept. Asking only whether the fetch rejected would confuse "the policy
+ * allowed it" with "something answered", and asking only what was intercepted
+ * would confuse "the policy refused it" with "the handler declined". Both are
+ * read, on both destinations, in the one run.
+ *
+ * The second destination is the honesty of it. A permitted fetch that is
+ * intercepted proves the policy admits something; it does not prove the policy
+ * is still refusing anything. So an origin the policy does not name is asked for
+ * in the same breath, under the same interception, and has to reach neither the
+ * handler nor a resolved promise — and the browser's own violation report says
+ * which directive refused it.
+ */
+test('the policy permits the one origin it names, and still refuses one it does not', async ({ page, baseURL }) => {
+  expect(POLICY_CONNECT_ORIGIN, 'the policy names no source but `self`, so there is nothing here to permit').toMatch(
+    /^https:\/\/[^\s'"]+$/,
+  );
+  const base = new URL(String(baseURL));
+  expect(
+    new URL(POLICY_CONNECT_ORIGIN).origin,
+    'the origin the policy names is the origin the page is served from, so permitting it says nothing',
+  ).not.toBe(base.origin);
+
+  // An origin the policy does not name, spelled in a reserved namespace that
+  // cannot be registered and so cannot be reached by accident. It never leaves
+  // the page in any case — the policy refuses it, and the route below would have
+  // answered it if it had not.
+  const unnamed = 'https://named-by-no-directive.invalid';
+
+  /** Every request the page actually made to either destination. @type {string[]} */
+  const intercepted = [];
+  await page.route('**/*', async (route) => {
+    const url = route.request().url();
+    if (url.startsWith(POLICY_CONNECT_ORIGIN) || url.startsWith(unnamed)) {
+      intercepted.push(url);
+      // Answered here, so nothing is resolved and nothing is connected to. The
+      // body is empty and the status is the one that carries none: what is being
+      // read is that the request existed, not what came back.
+      await route.fulfill({ status: 204, body: '' });
+      return;
+    }
+    await route.continue();
+  });
+
+  /** @type {string[]} */
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  await page.goto('/index.html');
+
+  const observed = await page.evaluate(async ([permitted, refused]) => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+
+    /** @type {{ blockedURI: string, effectiveDirective: string, disposition: string }[]} */
+    const violations = [];
+    inPage['document'].addEventListener(
+      'securitypolicyviolation',
+      (/** @type {Record<string, any>} */ violation) => {
+        violations.push({
+          blockedURI: violation['blockedURI'],
+          effectiveDirective: violation['effectiveDirective'],
+          disposition: violation['disposition'],
+        });
+      },
+    );
+
+    /**
+     * What a fetch did, as data rather than as an exception.
+     *
+     * `no-cors` on both, so that the sharing rule is not what decides either
+     * answer and the pair is a comparison of destinations. Both are off-origin,
+     * so a permitted one comes back opaque; that it came back at all is the
+     * half of the reading this side carries.
+     *
+     * @param {string} target
+     */
+    const asked = async (target) => {
+      try {
+        const response = await fetch(target, { mode: 'no-cors' });
+        return { rejected: false, kind: '', type: response.type };
+      } catch (error) {
+        return { rejected: true, kind: error instanceof Error ? error.name : typeof error, type: '' };
+      }
+    };
+
+    const allowed = await asked(`${permitted}/`);
+    const blocked = await asked(`${refused}/`);
+    // The violation is reported on a task of its own, so the report can be
+    // behind the rejected promise that caused it.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+    return { allowed, blocked, violations };
+  }, [POLICY_CONNECT_ORIGIN, unnamed]);
+
+  // The direction this test exists for: the policy did not stop it, so it became
+  // a request.
+  expect(
+    observed.allowed,
+    `the page could not reach ${POLICY_CONNECT_ORIGIN}, which its own policy names`,
+  ).toEqual({ rejected: false, kind: '', type: 'opaque' });
+  expect(
+    intercepted.filter((url) => url.startsWith(POLICY_CONNECT_ORIGIN)),
+    'the fetch resolved without the harness ever seeing a request, so the policy was not what let it through',
+  ).toEqual([`${POLICY_CONNECT_ORIGIN}/`]);
+
+  // And the same policy, still refusing. Rejected, never intercepted, and
+  // reported by the browser as this directive's doing.
+  expect(observed.blocked, `the page reached ${unnamed}, which the policy does not name`).toEqual({
+    rejected: true,
+    kind: 'TypeError',
+    type: '',
+  });
+  expect(
+    intercepted.filter((url) => url.startsWith(unnamed)),
+    'a destination the policy does not name became a request, so the policy refused nothing',
+  ).toEqual([]);
+  // The blocked address as the browser spells it back, which is the address that
+  // was asked for and not the origin it is on: a fetch of an origin asks for the
+  // path at its root, and the report names what was refused.
+  expect(observed.violations, 'the browser did not report refusing the request under the policy').toEqual([
+    { blockedURI: `${unnamed}/`, effectiveDirective: 'connect-src', disposition: 'enforce' },
+  ]);
+
+  expect(pageErrors, 'the page reported an error while the policy was being read').toEqual([]);
 });
