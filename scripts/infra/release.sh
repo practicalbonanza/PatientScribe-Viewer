@@ -201,9 +201,15 @@ remediate_back() {
   echo
   echo 'THE WAY OUT IS BACK — the entry point was replaced and the target is unverified.'
   echo
-  echo '  Every object of the target landed before the entry point moved, so a rollback to'
-  echo '  the prior release runs clean: its own upload step re-puts the prior origin table,'
-  echo '  and its union leg holds for target-caused refusals.'
+  echo '  Every object of the target landed before the entry point moved, so a rollback re-puts'
+  echo '  the prior origin table and its union leg holds for target-caused refusals.'
+  echo
+  echo '  WITHIN ONE HEADER EPOCH. The wire verdict derives the connect-src it expects from the'
+  echo '  target'"'"'s own committed table and compares it against the LIVE response header, so a'
+  echo '  rollback across a change to the API origin that header carries cannot come up green —'
+  echo '  and the preflight'"'"'s cross-stack gate refuses that rollback before anything is touched,'
+  echo '  naming both origins. Across such a change the way out is FORWARD, or the kill path:'
+  echo '  disable the distribution.'
   echo
   if [ "$PRIOR_RELEASE_ID" = 'no-prior-release' ]; then
     echo '  There is no prior release to go back to — this origin was serving nothing before'
@@ -287,6 +293,13 @@ note "[0] preflight held: ${RELEASE_ID} at ${MANIFEST_COMMIT} is what this repos
 # ---------------------------------------------------------------------------
 resolve_deployment
 note "[1] resolved: distribution ${DISTRIBUTION_ID}, origin ${ORIGIN}"
+
+# And the one cross-stack read, while nothing has been mutated: the table this
+# switch will serve has to agree with the share API that is actually deployed.
+# The share stack is in ap-southeast-2 rather than this stack's us-east-1 — the
+# one deliberate exception to the region idiom, written out in release-common.sh.
+prove_share_api_binding
+note "[1] the origin table agrees with the deployed ${SHARE_STACK}, whose endpoint is ${SHARE_API_ENDPOINT}"
 
 # ---------------------------------------------------------------------------
 # [2] The prior-release capture — still the refusal regime

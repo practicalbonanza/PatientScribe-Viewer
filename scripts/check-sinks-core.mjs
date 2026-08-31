@@ -259,7 +259,7 @@ const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';
  * the one the admission below treats differently from its siblings. Both facts
  * have the same cause and it is written out beside each of them.
  */
-const HOSTED_DEVELOPMENT_API_ORIGIN = 'https://2kcwhm87v5.execute-api.ap-southeast-2.amazonaws.com';
+const HOSTED_DEVELOPMENT_API_ORIGIN = 'https://gl9wnq4nh4.execute-api.ap-southeast-2.amazonaws.com';
 
 /**
  * The five destinations this viewer names, and the file or files each belongs in.

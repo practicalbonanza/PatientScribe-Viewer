@@ -130,6 +130,23 @@ cat > "$WORK/stacks.json" <<JSON
 }
 JSON
 
+# The SHARE stack, read by exactly one thing: the cross-stack origin gate that
+# runs between the recovery entry's branch point and D0. Its endpoint is the
+# local-conformance origin with the stage the viewer's paths carry, which is what
+# the committed table answers for that origin — a matching pair.
+cat > "$WORK/share-stacks.json" <<JSON
+{
+  "Stacks": [
+    {
+      "StackName": "patientscribe-share-dev",
+      "Outputs": [
+        { "OutputKey": "ShareApiEndpoint", "OutputValue": "http://${LOOPBACK}/prod" }
+      ]
+    }
+  ]
+}
+JSON
+
 MIRROR="$WORK/origin"
 rm -rf "$MIRROR"
 cp -R "$TARGET_DIR/layout" "$MIRROR"
@@ -152,6 +169,7 @@ node -e '
 FAKE_AWS_TRANSCRIPT="$WORK/transcript.txt"; export FAKE_AWS_TRANSCRIPT
 FAKE_AWS_ACCOUNT='account-under-test'; export FAKE_AWS_ACCOUNT
 FAKE_AWS_STACKS="$WORK/stacks.json"; export FAKE_AWS_STACKS
+FAKE_AWS_SHARE_STACKS="$WORK/share-stacks.json"; export FAKE_AWS_SHARE_STACKS
 FAKE_AWS_LISTING="$WORK/listing.json"; export FAKE_AWS_LISTING
 FAKE_AWS_S3_ROOT="$MIRROR"; export FAKE_AWS_S3_ROOT
 FAKE_AWS_S3_BUCKET="$ORIGIN_BUCKET_VALUE"; export FAKE_AWS_S3_BUCKET
@@ -273,6 +291,48 @@ if grep -q 'drill-restored' "$WORK/transcript-restore-only.txt"; then
   record ok 'the recovery entry logs drill-restored'
 else
   record fail 'the recovery entry logs drill-restored' "$(cat "$WORK/transcript-restore-only.txt")"
+fi
+if grep -q -- '--stack-name patientscribe-share-dev' "$WORK/transcript-restore-only.txt"; then
+  record fail 'the recovery entry makes no share-stack call at all' "$(cat "$WORK/transcript-restore-only.txt")"
+else
+  record ok 'the recovery entry makes no share-stack call at all'
+fi
+
+# ---------------------------------------------------------------------------
+# The cross-stack origin gate, and the carve-out that keeps it off the way back
+# ---------------------------------------------------------------------------
+#
+# Fail-closed on the drilling path: a drill is an armed act on a live origin and
+# it is held to the same binding a switch is, so a share stack this cannot read
+# is a drill this refuses — before D0, with nothing mutated and nothing logged.
+FAKE_AWS_SHARE_STACKS_FAIL='yes'; export FAKE_AWS_SHARE_STACKS_FAIL
+drill_dev 'share-unreadable'
+expect_status 'a drill refuses when the share stack cannot be described' 1
+if grep -q '^s3api put-object' "$WORK/transcript-share-unreadable.txt"; then
+  record fail 'the gate refusal mutates nothing' "$(cat "$WORK/transcript-share-unreadable.txt")"
+else
+  record ok 'the gate refusal mutates nothing'
+fi
+if grep -q "$LOG_PREFIX_VALUE" "$WORK/transcript-share-unreadable.txt"; then
+  record fail 'the gate refusal logs nothing' "$(cat "$WORK/transcript-share-unreadable.txt")"
+else
+  record ok 'the gate refusal logs nothing'
+fi
+
+# And the direction the carve-out exists for, seen rather than argued: the same
+# unreadable share stack, and the recovery entry restores anyway. A restoration
+# is the way back from a drill that crashed; making it wait on another unit's
+# stack being readable would be a recovery entry with a new way to be
+# unavailable, at exactly the moment the origin is serving mangled bytes.
+mangle_the_mirror_by_hand
+drill_dev 'restore-share-unreadable' --restore
+unset FAKE_AWS_SHARE_STACKS_FAIL
+expect_status 'the recovery entry restores with the share stack unreadable' 0
+mirror_is_honest 'and the origin is serving the proven bytes again'
+if grep -q -- '--stack-name patientscribe-share-dev' "$WORK/transcript-restore-share-unreadable.txt"; then
+  record fail 'and it never asked the share stack anything' "$(cat "$WORK/transcript-restore-share-unreadable.txt")"
+else
+  record ok 'and it never asked the share stack anything'
 fi
 
 # ---------------------------------------------------------------------------

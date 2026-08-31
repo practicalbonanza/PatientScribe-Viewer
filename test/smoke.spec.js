@@ -88,7 +88,7 @@ const ROOT_ID = 'viewer-root';
  * compared is the value, and the value is what the page carries byte for byte.
  */
 const POLICY =
-  "default-src 'self'; connect-src 'self' https://2kcwhm87v5.execute-api.ap-southeast-2.amazonaws.com; " +
+  "default-src 'self'; connect-src 'self' https://gl9wnq4nh4.execute-api.ap-southeast-2.amazonaws.com; " +
   "style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'";
 
 /**

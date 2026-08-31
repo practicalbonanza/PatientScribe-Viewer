@@ -83,11 +83,19 @@ const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';
  * that named an origin the policy does not carry would be a viewer that asks for
  * a request the browser then throws away.
  *
+ * Where this value comes from: it is the origin of the share stack's
+ * `ShareApiEndpoint` output — the scheme and host of it, with the stage left off,
+ * because a table entry is an origin and the stage rides the request path in
+ * `flow.js`. That provenance is not left to a comment. The release preflight
+ * reads the deployed share stack and refuses a switch whose table disagrees with
+ * it, so an origin written here that no share stack serves stops a release
+ * before anything is uploaded.
+ *
  * Not a secret either, and less of one than the address above: it rides the
  * `connect-src` of the security policy on every response the hosting serves, so
  * it is already in the headers any recipient of this page can read.
  */
-const HOSTED_DEVELOPMENT_API_ORIGIN = 'https://2kcwhm87v5.execute-api.ap-southeast-2.amazonaws.com';
+const HOSTED_DEVELOPMENT_API_ORIGIN = 'https://gl9wnq4nh4.execute-api.ap-southeast-2.amazonaws.com';
 
 /**
  * Origin served from, to origin talked to.

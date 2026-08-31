@@ -33,6 +33,15 @@
 # this stack lives in that region and every call says so.
 REGION='us-east-1'
 
+# THE ONE EXCEPTION, stated rather than discovered. The share API is not part of
+# the viewer stack and is not in the viewer stack's region: it is deployed in
+# ap-southeast-2, where the rest of that unit lives. The cross-stack origin gate
+# below is the only thing here that reads it, and it is the only call in either
+# driver that does not carry us-east-1. Everything else about the house argv
+# shape holds for it — `--output json`, the profile and the region at the end of
+# the argument list, no default read from anywhere.
+SHARE_REGION='ap-southeast-2'
+
 # Public-safe, each with a stated default: nothing about a poll interval, a
 # timeout or a retention period is private.
 DEFAULT_PROFILE='patientscribe-dev'
@@ -174,6 +183,12 @@ aws_pinned() {
   aws "$@" --region "$REGION" --profile "$PROFILE"
 }
 
+# The same call shape against the share API's region. One caller, one reason, and
+# both are written out at SHARE_REGION above.
+aws_pinned_in_share_region() {
+  aws "$@" --region "$SHARE_REGION" --profile "$PROFILE"
+}
+
 # ---------------------------------------------------------------------------
 # The flavour and the overlay have to be talking about the same environment
 # ---------------------------------------------------------------------------
@@ -189,6 +204,15 @@ bind_environment() {
     refuse "this is a ${FLAVOUR} run and ${OVERLAY} is a ${OVERLAY_ENVIRONMENT} overlay"
   fi
   STACK="patientscribe-viewer-${FLAVOUR}"
+
+  # The share stack the cross-stack origin gate reads, bound to the same flavour
+  # by the same argument. Its dev name carries the flavour and its prod name does
+  # not, which is that unit's own naming and is written out here rather than
+  # assembled from a rule that would be wrong for one of the two.
+  case "$FLAVOUR" in
+    prod) SHARE_STACK='patientscribe-share' ;;
+    *) SHARE_STACK="patientscribe-share-${FLAVOUR}" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -348,9 +372,15 @@ prove_config_binding() {
 # ---------------------------------------------------------------------------
 #
 # The account assertion runs before any other call, so a wrong profile costs
-# nothing. Then describe-stacks — the only cloudformation call this round makes —
-# and every target below is read from ITS outputs rather than from the overlay:
-# the deployed truth wins over a local file wherever both exist.
+# nothing. Then describe-stacks on the viewer stack, and every target below is
+# read from ITS outputs rather than from the overlay: the deployed truth wins
+# over a local file wherever both exist.
+#
+# It is no longer the only cloudformation call the round makes, and saying so is
+# the point of this line. The cross-stack origin gate below reads the share stack
+# as well, which is a second describe-stacks in a second region — so a switch and
+# a drilling run each make two, and the drill's `--restore` path, which does not
+# run that gate, still makes only this one.
 resolve_deployment() {
   sh "$HERE/assert-account.sh" --profile "$PROFILE" --overlay "$OVERLAY" || exit $?
 
@@ -418,6 +448,68 @@ resolve_origin() {
   esac
 
   ORIGIN="${ORIGIN_SCHEME}://${ORIGIN_HOST}"
+}
+
+# ---------------------------------------------------------------------------
+# The cross-stack origin gate
+# ---------------------------------------------------------------------------
+#
+# WHAT IT BINDS. The origin table decides where a recipient's access code
+# travels, and until this existed nothing tied that decision to the API that
+# actually serves shares: the viewer shipped naming a different API of the same
+# account entirely, and every gate stayed green because every gate compared the
+# table against a transcription of itself. This asks the share stack what it
+# serves and refuses a switch whose table disagrees.
+#
+# WHICH TABLE. The one the switch will SERVE — this checkout's `site/js/config.js`,
+# which `prove_config_binding` has already digest-bound to the target manifest.
+# Bound to the target rather than to anything else on purpose: the switch this
+# has to refuse is a switch TO a release whose table disagrees with the deployed
+# share truth, and refused here it costs nothing, where a table read from
+# somewhere else would let those bytes be uploaded and die at the [7] verdict
+# afterwards. A rollback to a release of the same header epoch passes by
+# construction, because its table is the deployed truth; a rollback across an
+# API-origin change refuses here, clean, naming both values — and RELEASING.md
+# says plainly that such a rollback could not have come up green anyway.
+#
+# WHERE IT RUNS, and where it does NOT. After the deployment is resolved, in the
+# switch and in the drill. NEVER on the drill's `--restore` path: that recovery
+# entry runs the shared preflight and resolution before it branches, and a
+# fail-closed read of another unit's stack there would block a restoration whose
+# whole purpose is that it always runs. The restore path makes no share-stack
+# call at all.
+#
+# ONE READ. `describe-stacks` on the flavour-bound share stack, in that stack's
+# own region. Every failure of it — unreadable stack, missing output, a table
+# that disagrees — is a refusal: nonzero, nothing mutated, nothing logged.
+#
+# BOTH VALUES IN EVERY REFUSAL, and that is why the table side is read FIRST.
+# Two of the three refusals here happen when the stack side is precisely what
+# could not be had — an unreadable stack, a stack carrying no endpoint — and a
+# message that named only what it failed to read would leave the operator to go
+# and look up the half that was sitting on the disk in front of it. The table
+# side is readable in all three directions, so it is read once, up front, and
+# every refusal names it. Asked of the module rather than transcribed, exactly as
+# the comparison asks it: a second spelling of this value is the first thing
+# nothing keeps in step.
+#
+# Fail-closed, and the failure that matters is the one that does NOT happen: a
+# table this cannot ask does not become a refusal that says nothing, and it does
+# not become a success either. The query answers 0 with the value or 2 having
+# said why; a 2 leaves a phrase saying so, and the refusal below fires on the
+# stack read regardless of which it was.
+prove_share_api_binding() {
+  TABLE_ANSWER=$(node "$HERE/check-share-api-binding.mjs" --table-answer "$REPO/site/js/config.js" "$ORIGIN") ||
+    TABLE_ANSWER='an answer this could not read out of the table'
+
+  aws_pinned_in_share_region cloudformation describe-stacks --stack-name "$SHARE_STACK" --output json \
+    > "$RECORD_DIR/share-stacks.json" ||
+    refuse "the share stack ${SHARE_STACK} could not be described in ${SHARE_REGION}, and the origin table this run would serve answers ${TABLE_ANSWER} for ${ORIGIN} — a share stack this cannot read is an armed act this cannot prove, because there is nothing to hold that answer against"
+
+  SHARE_API_ENDPOINT=$(node "$CORE" --read-output "$RECORD_DIR/share-stacks.json" ShareApiEndpoint) ||
+    refuse "the share stack ${SHARE_STACK} carries no ShareApiEndpoint output, and the origin table this run would serve answers ${TABLE_ANSWER} for ${ORIGIN} — there is no deployed truth here to bind that answer to"
+
+  node "$HERE/check-share-api-binding.mjs" "$REPO/site/js/config.js" "$ORIGIN" "$SHARE_API_ENDPOINT" || exit 1
 }
 
 # ---------------------------------------------------------------------------

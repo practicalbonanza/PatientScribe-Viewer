@@ -274,6 +274,23 @@ if [ "$RESTORE_ONLY" = 'yes' ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# The cross-stack origin gate, on this side of the recovery entry
+# ---------------------------------------------------------------------------
+#
+# AFTER the `--restore` branch and before the first mutation, and that placement
+# is the whole of the decision. A drill is an armed act on a live origin and it
+# is held to the same binding a switch is: the table it is about to prove has to
+# agree with the deployed share API. A restoration is not — it is the way back
+# from a drill that crashed, it always runs, and making it wait on another unit's
+# stack being readable would be a recovery entry with a new way to be unavailable.
+# So the restore path above makes no share-stack call at all, and this one does.
+#
+# The share stack is in ap-southeast-2 rather than this stack's us-east-1 — the
+# one deliberate exception to the region idiom, written out in release-common.sh.
+prove_share_api_binding
+note "D-pre the origin table agrees with the deployed ${SHARE_STACK}, whose endpoint is ${SHARE_API_ENDPOINT}"
+
+# ---------------------------------------------------------------------------
 # D0 — the baseline. A red baseline is a refusal: nothing mutated, nothing logged
 # ---------------------------------------------------------------------------
 fresh_inventory "$RECORD_DIR/inventory-baseline.json" 'baseline' ||

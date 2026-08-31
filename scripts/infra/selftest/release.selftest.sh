@@ -127,6 +127,12 @@ cat > "$WORK/overlay.json" <<'JSON'
 ]
 JSON
 
+# The third argument is the distribution's domain, and it defaults to the
+# loopback the whole run resolves to. It is a parameter at all for the gate's
+# refusing directions: those refuse before anything is served, so they can be
+# pointed at the HOSTED entry of the committed table — the entry whose key and
+# destination are DIFFERENT origins, which is what keeps their readings from
+# passing on a value that is two things at once.
 write_stacks() {
   cat > "$1" <<JSON
 {
@@ -135,7 +141,7 @@ write_stacks() {
       "StackName": "patientscribe-viewer-dev",
       "Outputs": [
         { "OutputKey": "DistributionId", "OutputValue": "EXAMPLEDISTID" },
-        { "OutputKey": "DistributionDomainName", "OutputValue": "${LOOPBACK}" },
+        { "OutputKey": "DistributionDomainName", "OutputValue": "${3:-$LOOPBACK}" },
         { "OutputKey": "OriginBucket", "OutputValue": "${ORIGIN_BUCKET_VALUE}" },
         { "OutputKey": "ReleaseLogBucket", "OutputValue": "${LOG_BUCKET_VALUE}" },
         { "OutputKey": "ReleaseLogPrefix", "OutputValue": "$2" }
@@ -149,6 +155,46 @@ JSON
 write_stacks "$WORK/stacks.json" "$LOG_PREFIX_VALUE"
 write_stacks "$WORK/stacks-empty-prefix.json" ''
 write_stacks "$WORK/stacks-unterminated-prefix.json" 'release-log'
+
+# The SHARE stack, which is a different stack in a different region and is read
+# by exactly one thing: the cross-stack origin gate. Its endpoint carries the
+# stage the viewer's path constants carry, because that is what the account
+# serves — and the gate compares the ORIGIN of it against what the committed
+# table answers, so this document is what makes that comparison drivable.
+#
+# The endpoint here is the local-conformance origin, because that is the origin
+# this whole self-test resolves to and the committed table answers it with
+# itself. A matching pair, which is the happy path.
+write_share_stacks() {
+  cat > "$1" <<JSON
+{
+  "Stacks": [
+    {
+      "StackName": "patientscribe-share-dev",
+      "Outputs": [
+        { "OutputKey": "ShareApiEndpoint", "OutputValue": "$2" }
+      ]
+    }
+  ]
+}
+JSON
+}
+
+write_share_stacks "$WORK/share-stacks.json" "http://${LOOPBACK}/prod"
+write_share_stacks "$WORK/share-stacks-elsewhere.json" 'https://an-api-this-viewer-does-not-name.invalid/prod'
+
+cat > "$WORK/share-stacks-no-output.json" <<'JSON'
+{
+  "Stacks": [
+    {
+      "StackName": "patientscribe-share-dev",
+      "Outputs": [
+        { "OutputKey": "ShareApiId", "OutputValue": "share-api-under-test" }
+      ]
+    }
+  ]
+}
+JSON
 
 # The listing the origin answers with, built from the layout that will be on it.
 listing_from_layout() {
@@ -190,6 +236,7 @@ mkdir -p "$MIRROR"
 FAKE_AWS_TRANSCRIPT="$WORK/transcript.txt"; export FAKE_AWS_TRANSCRIPT
 FAKE_AWS_ACCOUNT='account-under-test'; export FAKE_AWS_ACCOUNT
 FAKE_AWS_STACKS="$WORK/stacks.json"; export FAKE_AWS_STACKS
+FAKE_AWS_SHARE_STACKS="$WORK/share-stacks.json"; export FAKE_AWS_SHARE_STACKS
 FAKE_AWS_LISTING="$WORK/listing.json"; export FAKE_AWS_LISTING
 FAKE_AWS_GET_OBJECT_BODY="$WORK/build/$RETAINED_ID/layout/index.html"; export FAKE_AWS_GET_OBJECT_BODY
 FAKE_AWS_S3_ROOT="$MIRROR"; export FAKE_AWS_S3_ROOT
@@ -590,6 +637,246 @@ expect_no_mutation 'the unterminated-prefix refusal costs no mutation'
 FAKE_AWS_STACKS="$WORK/stacks.json"
 
 # ---------------------------------------------------------------------------
+# [1] The cross-stack origin gate
+# ---------------------------------------------------------------------------
+#
+# Four directions, and the first of them is the one the whole gate is for. The
+# committed table decides where a recipient's access code travels; nothing bound
+# that to the API that actually serves shares, and a viewer shipped naming a
+# different API of the same account entirely with every gate green. So: a target
+# whose table disagrees with the deployed share stack has to refuse, and it has
+# to refuse BEFORE anything is uploaded.
+#
+# READ ON THE HOSTED ENTRY, NOT THE LOOPBACK ONE, and that is a decision about
+# what these readings can see rather than a detail of the fixture. The loopback
+# entry answers ITSELF: for a run resolving there, "the origin under test" and
+# "what the table answers" are the same string, so a reading that looks for the
+# answer in a refusal is satisfied by the words "for <the origin>" whether the
+# answer is in the message or not. A message that dropped the answer entirely
+# would still have passed. The hosted entry's key and destination are different
+# origins, so the three values these refusals carry — the origin under test, what
+# the table answers, what the stack serves — are three different strings, and a
+# reading for one of them cannot be satisfied by another.
+#
+# These directions can be pointed anywhere because every one of them refuses at
+# the gate, before a listing, a put or the wire check. Nothing has to be served
+# at the origin they name.
+#
+# Everything below is derived from the committed table by ASKING it. Spelled out
+# here, each would be a new transcription of a served destination and the first
+# one nothing keeps in step.
+GATE_QUERY="$ROOT/scripts/infra/check-share-api-binding.mjs"
+
+# The hosted entry's key: the origin in the table that is not the loopback one.
+HOSTED_VIEWER_ORIGIN=$(node -e '
+  const { pathToFileURL } = require("node:url");
+  import(pathToFileURL(process.argv[1]).href).then((table) => {
+    const other = Object.keys(table.API_ORIGINS).find((one) => one !== process.argv[2]);
+    process.stdout.write(other === undefined ? "" : other);
+  });
+' "$SCRATCH/site/js/config.js" "http://${LOOPBACK}")
+HOSTED_VIEWER_HOST="${HOSTED_VIEWER_ORIGIN#https://}"
+
+# And what that entry answers, which is the share API origin.
+HOSTED_TABLE_ANSWER=$(node "$GATE_QUERY" --table-answer "$SCRATCH/site/js/config.js" "$HOSTED_VIEWER_ORIGIN") ||
+  HOSTED_TABLE_ANSWER=''
+
+# The de-aliasing is the thing every reading below rests on, so it is asserted
+# rather than assumed: three values, each of them a value, and the two that could
+# collide kept apart. If this ever fails, the readings underneath it have stopped
+# being able to tell what they are looking at.
+if [ -n "$HOSTED_VIEWER_ORIGIN" ] && [ -n "$HOSTED_TABLE_ANSWER" ] &&
+  [ "$HOSTED_VIEWER_ORIGIN" != "$HOSTED_TABLE_ANSWER" ]; then
+  record ok "the hosted entry is asked, and answers ${HOSTED_TABLE_ANSWER} for ${HOSTED_VIEWER_ORIGIN} — a key and a destination that are different origins"
+else
+  record fail 'the hosted entry is asked, and answers a destination that is a different origin from its key' \
+    "key '${HOSTED_VIEWER_ORIGIN}', destination '${HOSTED_TABLE_ANSWER}' — a reading for one of these could be satisfied by the other"
+fi
+
+write_stacks "$WORK/stacks-hosted.json" "$LOG_PREFIX_VALUE" "$HOSTED_VIEWER_HOST"
+write_share_stacks "$WORK/share-stacks-hosted.json" "${HOSTED_TABLE_ANSWER}/prod"
+write_share_stacks "$WORK/share-stacks-malformed.json" 'an-endpoint-that-is-not-a-url'
+
+# The refusal LINE, and which program's, by name.
+#
+# Not the whole output: every one of these runs prints its resolution note a few
+# lines above its refusal, and that note names the origin under test — so a grep
+# over the file would be answered by the note whatever the refusal said. And not
+# "the first line saying refusing" either, because two programs refuse on this
+# path and they refuse about different things: the driver refuses what it could
+# not read, and the gate's own module refuses what it compared. Each reading below
+# names the one it means, so a refusal arriving from the wrong program is a
+# reading that finds nothing rather than one that passes.
+gate_refusal_line() {
+  grep '^check-share-api-binding — refusing:' "$WORK/out-${1}.txt" | head -1
+}
+
+driver_refusal_line() {
+  grep '^release — refusing:' "$WORK/out-${1}.txt" | head -1
+}
+
+# THE MAPPING CHANGED AND NOTHING ELSE. That is the direction a gate written
+# against a hard-coded nominal origin cannot pass, so it is the one built most
+# carefully. The subject is a second repository: the real site/ with a single
+# entry of the committed table re-pointed, committed, built and published there.
+# Everything before the gate holds on it — its manifest binds its own config
+# digest, its provenance reproduces, the public tip publishes it — and the only
+# thing wrong with it is where it would send a share code.
+MAPPED_SCRATCH='scratch-mapped'
+mkdir -p "$WORK/$MAPPED_SCRATCH"
+git -C "$WORK/$MAPPED_SCRATCH" init -q -b main
+git -C "$WORK/$MAPPED_SCRATCH" config user.name 'viewer selftest'
+git -C "$WORK/$MAPPED_SCRATCH" config user.email 'viewer-selftest'
+cp -R "$ROOT/site" "$WORK/$MAPPED_SCRATCH/site"
+node -e '
+  const { readFileSync, writeFileSync } = require("node:fs");
+  const file = process.argv[1];
+  const was = "[HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,";
+  const now = "[HOSTED_DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,";
+  const text = readFileSync(file, "utf8");
+  if (!text.includes(was)) {
+    throw new Error("the table entry this case re-points is not written that way in " + file);
+  }
+  writeFileSync(file, text.replace(was, now));
+' "$WORK/$MAPPED_SCRATCH/site/js/config.js"
+git -C "$WORK/$MAPPED_SCRATCH" add -A
+git -C "$WORK/$MAPPED_SCRATCH" commit -q -m 'one entry of the origin table re-pointed'
+
+MAPPED_COMMIT12=$(git -C "$WORK/$MAPPED_SCRATCH" rev-parse HEAD | cut -c1-12)
+MAPPED_ID="20260201T101500Z-${MAPPED_COMMIT12}"
+( cd "$WORK/$MAPPED_SCRATCH" && node "$BUILD" --out "$WORK/build-mapped" --release-id "$MAPPED_ID" ) \
+  > "$WORK/build-mapped.log" 2>&1
+MAPPED_DIR="$WORK/build-mapped/$MAPPED_ID"
+mkdir -p "$WORK/$MAPPED_SCRATCH/releases"
+cp "$MAPPED_DIR/manifest.json" "$WORK/$MAPPED_SCRATCH/releases/${MAPPED_ID}.json"
+git -C "$WORK/$MAPPED_SCRATCH" add -A
+git -C "$WORK/$MAPPED_SCRATCH" commit -q -m 'publish it'
+git -C "$WORK/$MAPPED_SCRATCH" remote add origin "$PUBLIC_REMOTE"
+git -C "$WORK/$MAPPED_SCRATCH" update-ref refs/remotes/origin/main "$(git -C "$WORK/$MAPPED_SCRATCH" rev-parse HEAD)"
+
+FAKE_AWS_STACKS="$WORK/stacks-hosted.json"
+FAKE_AWS_SHARE_STACKS="$WORK/share-stacks-hosted.json"
+run_in_clone "$MAPPED_SCRATCH" 'mapping-changed' dev --release-id "$MAPPED_ID" --release-dir "$MAPPED_DIR" --operation release \
+  --profile patientscribe-dev --overlay "$WORK/overlay.json" \
+  --retention-days 400 --poll-seconds 1 --timeout-seconds 5
+expect_status 'a target whose table maps the origin under test somewhere the share stack is not refuses' 1
+
+# What the refusal has to name is asked of the re-pointed table itself rather
+# than transcribed here. A transcription would be a fourth spelling of a served
+# destination in this repository and the first one nothing keeps in step.
+MAPPED_DESTINATION=$(node "$GATE_QUERY" --table-answer \
+  "$WORK/$MAPPED_SCRATCH/site/js/config.js" "$HOSTED_VIEWER_ORIGIN") || MAPPED_DESTINATION=''
+
+# Read inside the GATE's own refusal line, and read for both halves. Three
+# distinct strings are in play here — the origin under test, what this table
+# answers, what the stack serves — so neither half of this can be satisfied by
+# the other, and neither by the resolution note further up the output.
+MAPPING_REFUSAL=$(gate_refusal_line 'mapping-changed')
+if [ -n "$MAPPED_DESTINATION" ] &&
+  printf '%s\n' "$MAPPING_REFUSAL" | grep -qF "$MAPPED_DESTINATION" &&
+  printf '%s\n' "$MAPPING_REFUSAL" | grep -qF "$HOSTED_TABLE_ANSWER"; then
+  record ok 'the mapping refusal names BOTH values — what the table answers and what the share stack serves'
+else
+  record fail 'the mapping refusal names BOTH values — what the table answers and what the share stack serves' \
+    "expected both ${MAPPED_DESTINATION} and ${HOSTED_TABLE_ANSWER} in: ${MAPPING_REFUSAL}"
+fi
+expect_no_mutation 'the mapping refusal is made BEFORE mutation — zero uploads, zero invalidations'
+expect_nothing_logged 'the mapping refusal logs nothing'
+if grep -q '^s3api put-object' "$WORK/transcript-mapping-changed.txt"; then
+  record fail 'and not one object of that release reached the origin' "$(transcript mapping-changed)"
+else
+  record ok 'and not one object of that release reached the origin'
+fi
+
+# BOTH VALUES, in the three directions where the stack side is what went wrong.
+# The contract is that a refusal names what the table answers AND what the stack
+# read was — and these are exactly where a message could name only the half it
+# failed to get, because the half it failed to get is the reason it is refusing.
+# So each of them is read as two claims rather than one, inside the refusing
+# program's own line, on the hosted entry where the answer is not also the origin.
+names_both() {
+  printf '%s\n' "$1" | grep -q "$2" && printf '%s\n' "$1" | grep -qF "$HOSTED_TABLE_ANSWER"
+}
+
+# A share stack that carries no endpoint at all.
+FAKE_AWS_SHARE_STACKS="$WORK/share-stacks-no-output.json"
+switch_target 'share-no-output'
+expect_status 'a share stack carrying no ShareApiEndpoint output refuses' 1
+NO_OUTPUT_REFUSAL=$(driver_refusal_line 'share-no-output')
+if names_both "$NO_OUTPUT_REFUSAL" 'ShareApiEndpoint'; then
+  record ok 'the missing-output refusal names the output it wanted AND what the table answers'
+else
+  record fail 'the missing-output refusal names the output it wanted AND what the table answers' \
+    "expected both ShareApiEndpoint and ${HOSTED_TABLE_ANSWER} in: ${NO_OUTPUT_REFUSAL}"
+fi
+expect_no_mutation 'the missing-output refusal costs no mutation'
+expect_nothing_logged 'the missing-output refusal logs nothing'
+
+# A share stack whose endpoint is THERE and is not a URL. One direction deeper
+# than the two around it: the stack side is present and unusable, so the message
+# has an endpoint to quote — and it still has to name the table's answer.
+FAKE_AWS_SHARE_STACKS="$WORK/share-stacks-malformed.json"
+switch_target 'share-malformed'
+expect_status 'a share stack whose endpoint is not a URL refuses' 1
+MALFORMED_REFUSAL=$(gate_refusal_line 'share-malformed')
+if names_both "$MALFORMED_REFUSAL" 'an-endpoint-that-is-not-a-url'; then
+  record ok 'the malformed-endpoint refusal names the endpoint as spelled AND what the table answers'
+else
+  record fail 'the malformed-endpoint refusal names the endpoint as spelled AND what the table answers' \
+    "expected both the endpoint and ${HOSTED_TABLE_ANSWER} in: ${MALFORMED_REFUSAL}"
+fi
+expect_no_mutation 'the malformed-endpoint refusal costs no mutation'
+expect_nothing_logged 'the malformed-endpoint refusal logs nothing'
+
+# A share stack that cannot be described at all. Fail closed: an unreadable share
+# stack is an armed act that cannot be proved, not one to make anyway.
+FAKE_AWS_SHARE_STACKS_FAIL='yes'; export FAKE_AWS_SHARE_STACKS_FAIL
+switch_target 'share-unreadable'
+unset FAKE_AWS_SHARE_STACKS_FAIL
+expect_status 'a share stack that cannot be described refuses' 1
+UNREADABLE_REFUSAL=$(driver_refusal_line 'share-unreadable')
+if names_both "$UNREADABLE_REFUSAL" 'patientscribe-share-dev'; then
+  record ok 'the unreadable-stack refusal names the stack it tried to read AND what the table answers'
+else
+  record fail 'the unreadable-stack refusal names the stack it tried to read AND what the table answers' \
+    "expected both patientscribe-share-dev and ${HOSTED_TABLE_ANSWER} in: ${UNREADABLE_REFUSAL}"
+fi
+expect_no_mutation 'the unreadable-stack refusal costs no mutation'
+expect_nothing_logged 'the unreadable-stack refusal logs nothing'
+
+# And back to the origin the rest of this file serves and resolves to.
+FAKE_AWS_STACKS="$WORK/stacks.json"
+FAKE_AWS_SHARE_STACKS="$WORK/share-stacks.json"
+
+# And the deployed side moving under a table that did not: same refusal, read
+# from the other end.
+FAKE_AWS_SHARE_STACKS="$WORK/share-stacks-elsewhere.json"
+switch_target 'share-elsewhere'
+FAKE_AWS_SHARE_STACKS="$WORK/share-stacks.json"
+expect_status 'a share stack serving an origin the table does not answer with refuses' 1
+expect_no_mutation 'the deployed-side refusal costs no mutation'
+expect_nothing_logged 'the deployed-side refusal logs nothing'
+
+# The passing direction, and where it is read from: the happy path below runs
+# through this gate, and its transcript has to carry the one share-stack read in
+# the share stack's own region.
+switch_target 'share-matching'
+expect_status 'a target whose table agrees with the deployed share stack passes' 0
+if grep -q '^cloudformation describe-stacks --stack-name patientscribe-share-dev --output json --region ap-southeast-2 ' \
+  "$WORK/transcript-share-matching.txt"; then
+  record ok 'the gate makes exactly one describe-stacks, on the share stack, in ap-southeast-2'
+else
+  record fail 'the gate makes exactly one describe-stacks, on the share stack, in ap-southeast-2' \
+    "$(transcript share-matching)"
+fi
+SHARE_READS=$(grep -c -- '--stack-name patientscribe-share-dev' "$WORK/transcript-share-matching.txt" || true)
+if [ "$SHARE_READS" -eq 1 ]; then
+  record ok 'and it reads that stack once and no more'
+else
+  record fail 'and it reads that stack once and no more' "${SHARE_READS} read(s)"
+fi
+
+# ---------------------------------------------------------------------------
 # [2] The prior-release capture
 # ---------------------------------------------------------------------------
 FAKE_AWS_LISTING="$WORK/listing-truncated.json"
@@ -651,11 +938,26 @@ case "$FIRST_CALL" in
   *) record fail 'the identity call is the first call made' "first line: ${FIRST_CALL}" ;;
 esac
 
-OFF_REGION=$(grep -v -- '--region us-east-1' "$HAPPY" || true)
-if [ -z "$OFF_REGION" ]; then
-  record ok 'every call carries the pinned region'
+# There are two pinned regions now, and the second one is named rather than
+# allowed for by a looser pattern. The share API is not part of the viewer stack
+# and is not in its region, so the cross-stack origin gate's one describe-stacks
+# carries ap-southeast-2 while everything else carries us-east-1. Read as two
+# claims: that call has to be exactly this call, and every OTHER call has to
+# carry the viewer stack's region — so a second off-region call is still a
+# failure rather than something the exception absorbs.
+SHARE_READ='cloudformation describe-stacks --stack-name patientscribe-share-dev --output json --region ap-southeast-2 --profile patientscribe-dev'
+if [ "$(grep -c -F -x "$SHARE_READ" "$HAPPY" || true)" -eq 1 ]; then
+  record ok 'the share stack is read exactly once, in its own region, in the house argv shape'
 else
-  record fail 'every call carries the pinned region' "$OFF_REGION"
+  record fail 'the share stack is read exactly once, in its own region, in the house argv shape' \
+    "$(grep 'patientscribe-share' "$HAPPY" || echo 'no share-stack read at all')"
+fi
+
+OFF_REGION=$(grep -v -F -x "$SHARE_READ" "$HAPPY" | grep -v -- '--region us-east-1' || true)
+if [ -z "$OFF_REGION" ]; then
+  record ok 'every other call carries the pinned region'
+else
+  record fail 'every other call carries the pinned region' "$OFF_REGION"
 fi
 
 UNPARSED=$(grep -E '^cloudformation describe-stacks|^s3api list-objects-v2|^s3api get-object|^cloudfront ' "$HAPPY" \
@@ -673,10 +975,11 @@ else
 fi
 
 CFN=$(grep -c '^cloudformation ' "$HAPPY" || true)
-if [ "$CFN" -eq 1 ] && grep -q '^cloudformation describe-stacks ' "$HAPPY"; then
-  record ok 'describe-stacks is the only cloudformation call this round makes'
+CFN_DESCRIBE=$(grep -c '^cloudformation describe-stacks ' "$HAPPY" || true)
+if [ "$CFN" -eq 2 ] && [ "$CFN_DESCRIBE" -eq 2 ]; then
+  record ok 'describe-stacks is the only cloudformation operation this round makes, and it makes exactly two of them: the viewer stack and the share stack'
 else
-  record fail 'describe-stacks is the only cloudformation call this round makes' "$(grep '^cloudformation ' "$HAPPY")"
+  record fail 'describe-stacks is the only cloudformation operation this round makes, and it makes exactly two of them: the viewer stack and the share stack' "$(grep '^cloudformation ' "$HAPPY")"
 fi
 
 if grep -q -- '--parameter-overrides' "$HAPPY"; then

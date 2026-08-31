@@ -453,7 +453,7 @@ async function sealedWithoutAName(fixture) {
  * @returns {readonly { text: string, from: string }[]}
  */
 function browserNetworkLines(origin) {
-  const request = `${origin}/share/open`;
+  const request = `${origin}/prod/share/open`;
   return [
     { text: 'error: Failed to load resource: net::ERR_FAILED', from: request },
     { text: 'error: Failed to load resource: the server responded with a status of 400 (Bad Request)', from: request },
@@ -1090,22 +1090,27 @@ async function openLink(page, fragment) {
  *
  * Every stub below is registered against one of these rather than against a
  * pattern that matches a path at any origin, and that is what makes the reading
- * underneath them able to see anything. A stub written as `**\/share/open`
- * answers for `/share/open` wherever it is asked of — so a viewer asking a
+ * underneath them able to see anything. A stub written as `**\/prod/share/open`
+ * answers for `/prod/share/open` wherever it is asked of — so a viewer asking a
  * different host for it would be answered by the test, with its own answer,
  * and nothing would be different about the run. Written whole, a request that
  * left this origin matches no stub at all and reaches the catch-all below.
+ *
+ * The paths carry the share API's one stage, because the viewer's own path
+ * constants do: the origin table is origins only, so the stage rides the path a
+ * request is built from. A stub spelled without it answers nothing the page asks
+ * for, which is a suite that goes red rather than one that quietly stops biting.
  *
  * @param {string | undefined} baseURL Where the harness serves the page from.
  * @returns {string}
  */
 function shareOpenAt(baseURL) {
-  return `${baseURL ?? ''}/share/open`;
+  return `${baseURL ?? ''}/prod/share/open`;
 }
 
 /** @see shareOpenAt @param {string | undefined} baseURL @returns {string} */
 function shareReportAt(baseURL) {
-  return `${baseURL ?? ''}/share/report`;
+  return `${baseURL ?? ''}/prod/share/report`;
 }
 
 /**
@@ -1157,7 +1162,7 @@ const traffic = new WeakMap();
  * complementary in a way that is worth writing down, because either of them
  * alone leaves a spelling through. The harness serves this page over `http`,
  * and a destination written as one of these schemes followed by fewer than two
- * slashes — `http:/elsewhere.example/share/open` — is read by a parser against
+ * slashes — `http:/elsewhere.example/prod/share/open` — is read by a parser against
  * the page it is written in: the scheme matches the page's, so it resolves
  * against this origin with the host pushed into the PATH. Here that spelling
  * makes no off-origin request at all and the origin reading sees nothing, while
@@ -1685,7 +1690,7 @@ test('the link is out of the address bar before anything is sent, and nothing se
       '/js/parse.js',
       '/js/validate.js',
       '/js/copy.js',
-      '/share/open',
+      '/prod/share/open',
     ].sort(),
   );
 

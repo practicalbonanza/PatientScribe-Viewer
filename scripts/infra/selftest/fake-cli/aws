@@ -53,8 +53,34 @@ case "$SERVICE $OPERATION" in
   'cloudformation execute-change-set')
     ;;
 
+  # Answered by stack name, because there are now two stacks a driver reads: the
+  # viewer stack it deploys and the share stack the cross-stack origin gate binds
+  # its table to. A single canned document for both would answer the gate with
+  # the viewer stack's outputs, which is a gate that refuses for the wrong reason
+  # and a happy path nobody could steer. Every caller that asks about neither
+  # share stack gets exactly what it always got.
   'cloudformation describe-stacks')
-    cat "${FAKE_AWS_STACKS:?fake aws — FAKE_AWS_STACKS is not set}"
+    DESCRIBE_STACK=''
+    DESCRIBE_PREVIOUS=''
+    for DESCRIBE_ARG in "$@"; do
+      case "$DESCRIBE_PREVIOUS" in
+        --stack-name) DESCRIBE_STACK="$DESCRIBE_ARG" ;;
+      esac
+      DESCRIBE_PREVIOUS="$DESCRIBE_ARG"
+    done
+
+    case "$DESCRIBE_STACK" in
+      patientscribe-share|patientscribe-share-*)
+        if [ -n "${FAKE_AWS_SHARE_STACKS_FAIL:-}" ]; then
+          echo "fake aws — the description of ${DESCRIBE_STACK} was told to fail" >&2
+          exit 254
+        fi
+        cat "${FAKE_AWS_SHARE_STACKS:?fake aws — FAKE_AWS_SHARE_STACKS is not set}"
+        ;;
+      *)
+        cat "${FAKE_AWS_STACKS:?fake aws — FAKE_AWS_STACKS is not set}"
+        ;;
+    esac
     ;;
 
   'cloudfront get-distribution-config')

@@ -63,11 +63,26 @@ import {
 
 /** @import { LinkParams } from './parse.js' */
 
+/**
+ * The two paths this viewer asks for, each carrying the share API's one stage.
+ *
+ * The stage is written here rather than in the origin table on purpose. That
+ * table is origins — a key that is an origin and a value that is an origin — and
+ * every gate that reads it asserts exactly that shape, so a stage folded into a
+ * value would be a table entry that is not an origin and a contract broken in
+ * the one place three separate checks agree on. A path is where a stage belongs,
+ * and a path is what a request is built from anyway.
+ *
+ * One stage, in every environment: the share API's deployment names `prod` and
+ * names nothing else, so this is not a per-environment spelling and there is no
+ * environment in which it is a different word.
+ */
+
 /** The path a share is asked for at. */
-const OPEN_PATH = '/share/open';
+const OPEN_PATH = '/prod/share/open';
 
 /** The path a link is reported at. */
-const REPORT_PATH = '/share/report';
+const REPORT_PATH = '/prod/share/report';
 
 /** What a body has to say, and be nothing but, for a code to have been wrong. */
 const WRONG_CODE_STATUS = 'wrong_code';

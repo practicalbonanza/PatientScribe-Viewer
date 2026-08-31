@@ -110,7 +110,7 @@ const CLI = fileURLToPath(new URL('./check-sinks.mjs', import.meta.url));
  * The cases here read that as two claims — the two positions it is admitted at,
  * and everywhere else it is not.
  */
-const API_ORIGIN = 'https://2kcwhm87v5.execute-api.ap-southeast-2.amazonaws.com';
+const API_ORIGIN = 'https://gl9wnq4nh4.execute-api.ap-southeast-2.amazonaws.com';
 
 /**
  * The two contexts that spelling is admitted in, written out here as the bytes

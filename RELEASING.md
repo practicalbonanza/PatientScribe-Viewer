@@ -98,6 +98,15 @@ local file wherever both exist. The origin under test is never an argument: dev 
 distribution's own domain, prod to the overlay's alias, because prod's check has to run against the live
 name or a DNS or TLS failure goes unseen.
 
+Then **the cross-stack origin gate**, still before any mutation: the origin table this switch will serve
+is asked what it answers for the origin under test, and that answer has to be the origin of the
+flavour-bound share stack's `ShareApiEndpoint` output, the stage stripped off — a table holds origins and
+the stage rides the request path. A disagreement, a missing output or a share stack that cannot be
+described is a refusal, naming both values and the stack read. The share stack lives in `ap-southeast-2`,
+which is the one deliberate exception to these drivers' `us-east-1` argv idiom. The drill runs the same
+gate after its recovery-entry branch; the `--restore` path does not run it at all, so a restoration never
+waits on another unit's stack being readable.
+
 **[2] The prior-release capture.** A fresh listing decides whether a prior entry point exists. Where it
 does not, the case is recorded as no-prior-release and nothing is read. Where it does, it is read and
 scanned for its release comment, and a served release the public tip does not publish stops the run
@@ -147,17 +156,27 @@ the origin refusing — extra or missing union assets, both fail-closed by desig
 completes or a later gated retirement round removes its objects. No tool in this repository deletes
 anything. The kill path is available meanwhile: disable the distribution.
 
-**A failure at the invalidation, the listing or the check — the way out is BACK.** Every object of the
-target landed before the entry point moved, so a rollback to the prior release runs clean. The driver
-prints that rollback with this run's own facts filled in: the prior release's published manifest, already
-materialised into the run's record area; the worktree-and-rebuild step; and the exact invocation, every
-value single-quoted and every path absolute, because the rollback runs in a fresh worktree where this
-run's relative paths mean nothing.
+**A failure at the invalidation, the listing or the check — the way out is BACK, within one header
+epoch.** Every object of the target landed before the entry point moved, so a rollback re-puts the prior
+origin table and its union leg holds for target-caused refusals. The driver prints that rollback with
+this run's own facts filled in: the prior release's published manifest, already materialised into the
+run's record area; the worktree-and-rebuild step; and the exact invocation, every value single-quoted and
+every path absolute, because the rollback runs in a fresh worktree where this run's relative paths mean
+nothing.
 
-The print is honest about the one thing a rollback cannot cure. Read the refusals: one naming a
-**retained** release's missing assets is the origin's roster being damaged rather than this target being
-wrong, and a rollback runs the same union and refuses identically. The ways out of that are completing
-that release's own upload, or a later gated retirement round.
+The condition on that, because it decides whether this way out exists at all: the wire verdict derives
+the `connect-src` it expects from the target's own committed origin table and compares it against the
+**live** response header. A rollback across a change to the API origin that header carries therefore
+cannot come up green, whatever else is right about it — and the preflight's cross-stack gate refuses such
+a rollback before anything is touched, naming both origins. Across a header change the way out is
+FORWARD, or the kill path. Within one epoch the rollback is the way out and the printed procedure is it.
+
+The print is honest about the two things a rollback cannot cure. The first: read the refusals, because
+one naming a **retained** release's missing assets is the origin's roster being damaged rather than this
+target being wrong, and a rollback runs the same union and refuses identically. The ways out of that are
+completing that release's own upload, or a later gated retirement round. The second is the header epoch
+above — a rollback whose target expects a different API origin from the one the live header carries is
+refused at the preflight, and could not have verified even if it were not.
 
 Both remediations are **printed, never executed**. An automatic rollback that itself fails invites a
 loop, and a rollback is its own gated act on the same path.
@@ -329,6 +348,7 @@ are the **complete** sets: nothing else is needed, and nothing else should be gr
 | Action | On |
 |---|---|
 | `cloudformation:DescribeStacks` | the viewer stack |
+| `cloudformation:DescribeStacks` | the share stack, in its own region |
 | `s3:PutObject` | the origin bucket |
 | `s3:ListBucket` | the origin bucket |
 | `cloudfront:CreateInvalidation` | the distribution |
@@ -341,6 +361,12 @@ are the **complete** sets: nothing else is needed, and nothing else should be gr
 | Action | On | Why |
 |---|---|---|
 | `s3:GetObject` | the origin bucket | one read: the pre-switch prior-release capture, which the drill never performs |
+
+**The `--restore` recovery entry needs less, and that is deliberate.** It makes no share-stack call at
+all, so `cloudformation:DescribeStacks` on the share stack is not among the grants a restoration
+requires. A restoration is the way back from a drill that crashed and it always runs; making it wait on
+another unit's stack being readable would be a recovery entry with a new way to be unavailable, at
+exactly the moment the origin is serving the wrong bytes.
 
 Nothing else. No delete action of any kind, no read of any other bucket, no IAM, no CloudFormation
 mutation. The identity call both flows make needs no grant at all — the service model says so, and a
@@ -363,6 +389,14 @@ permission that grants nothing has no place in a least-privilege document.
    now measures the permission directly — the request is intercepted by the harness, so what is read is the
    policy's decision and nothing leaves the machine. The edit sits inside the pinned safe prefix of the entry
    document, so it carried its own re-pin round.
+
+   **Which API origin that is, is not a matter of recollection.** It is the origin of the share stack's
+   `ShareApiEndpoint` output — its scheme and host, with the stage left off, because the table holds
+   origins and the stage rides the request path. That has been got wrong once already, in exactly the way
+   a reading of nothing gets things wrong: the shipped table named a different API of the same account,
+   and every gate stayed green because every gate compared the table against a transcription of itself.
+   So take the value from the deployed stack's output, and let the release preflight's cross-stack gate
+   be the thing that says it is right.
 4. **Build at that commit.** `node scripts/infra/build-release.mjs`.
 5. **Publish at the release-publish gate: commit the manifest under `releases/` AND push it.** The drivers
    read the public tip, so an unpushed manifest cannot switch.
@@ -377,6 +411,16 @@ and `scripts/infra/selftest/serve-built-release.mjs` binds it and nothing else. 
 self-tests; nothing else invokes it, and no response it writes is evidence about the real distribution. Its
 conformance bar is the real check's verdict: if the check refuses it, the defect is in that server or in
 the layout it was handed, never in the frozen expectation.
+
+**Where the hosted entry sends a viewer, and what that value is.** The hosted entry's destination is the
+share API: the origin of the share stack's `ShareApiEndpoint` output, scheme and host, with the stage
+left off. The table is origins and only origins — every gate that reads it asserts that shape — so the
+stage the share API deploys under rides the request paths in `site/js/flow.js` instead, one stage in
+every environment because the share API names one. Two things follow, and both are worth having in one
+place. The value in the table is not a spelling anybody remembers: the release preflight reads the
+deployed share stack and refuses a switch whose table disagrees with it. And a change to that value is a
+change to the served response header as well as to the table, which makes it an epoch boundary — see
+*When a switch fails* for what a rollback can and cannot do across one.
 
 **One armed act at a time.** Both drivers take the same lock — an atomic directory beside the release
 directories — and refuse while it is held, naming the holder. The scope is the build area the release
