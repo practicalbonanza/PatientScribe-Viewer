@@ -17,10 +17,10 @@
         <p id="code-helper"></p>
         <p id="code-row">
           <label id="code-label" for="code-input"></label>
-          <input id="code-input" type="text" />
+          <input id="code-input" type="text" inputmode="numeric" pattern="[0-9]*" autocapitalize="none" autocorrect="off" />
           <button id="code-submit" type="button"></button>
         </p>
-        <p id="wrong-code" hidden></p>
+        <p id="wrong-code" role="status"></p>
       </section>
       <p id="unavailable" hidden></p>
       <section id="note" hidden>

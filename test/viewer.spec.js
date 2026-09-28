@@ -110,7 +110,13 @@ function shareBody(fixture) {
   });
 }
 
-/** The shell: a code to type, and where the code comes from. */
+/**
+ * The shell: a code to type, and where the code comes from.
+ *
+ * The empty status node under the field is the line a code that did not match
+ * earns. It is always on the page and says nothing until that answer is drawn,
+ * so every shell carries it, empty.
+ */
 const SHELL = `- main:
   - heading "PatientScribe" [level=1]
   - paragraph: Someone has shared a PatientScribe note with you.
@@ -119,6 +125,7 @@ const SHELL = `- main:
     - text: Code
     - textbox "Code"
     - button "Open the note"
+  - status
   - group: For people viewing a shared note.
   - button "Report a problem with this link"`;
 
@@ -135,10 +142,11 @@ const SHELL_WITH_ADVISORY = `- main:
     - text: Code
     - textbox "Code"
     - button "Open the note"
+  - status
   - group: For people viewing a shared note.
   - button "Report a problem with this link"`;
 
-/** The shell, plus the one line a code that did not match earns. */
+/** The shell, plus the one line a code that did not match earns, written into the status region. */
 const WRONG_CODE = `- main:
   - heading "PatientScribe" [level=1]
   - paragraph: Someone has shared a PatientScribe note with you.
@@ -147,7 +155,34 @@ const WRONG_CODE = `- main:
     - text: Code
     - textbox "Code": ${TYPED_CODE}
     - button "Open the note"
-  - paragraph: That code didn't match. Check it with the person who shared this.
+  - status: That code didn't match. Check it with the person who shared this.
+  - group: For people viewing a shared note.
+  - button "Report a problem with this link"`;
+
+/** That line on its own, as the region it is written into holds it. */
+const WRONG_CODE_LINE = "That code didn't match. Check it with the person who shared this.";
+
+/**
+ * The same line, drawn for a press with nothing typed.
+ *
+ * The page refuses to send an empty field and draws the line this surface
+ * already has rather than a new one, so this is the surface above with the field
+ * as it was left — holding nothing.
+ *
+ * And a field holding nothing but spaces draws exactly this too, in both
+ * engines: a snapshot does not spell a value that is only whitespace, so the
+ * field reads as empty here either way. What the field is still holding in that
+ * case is read from the field itself, where it is asked for.
+ */
+const WRONG_CODE_NOTHING_TYPED = `- main:
+  - heading "PatientScribe" [level=1]
+  - paragraph: Someone has shared a PatientScribe note with you.
+  - paragraph: They'll have given you a code \u2014 usually over the phone.
+  - paragraph:
+    - text: Code
+    - textbox "Code"
+    - button "Open the note"
+  - status: That code didn't match. Check it with the person who shared this.
   - group: For people viewing a shared note.
   - button "Report a problem with this link"`;
 
@@ -158,6 +193,10 @@ const WRONG_CODE = `- main:
  * be pressed says what there is to say by not being pressable; a line of status
  * text beside it would be a second spelling of the same thing, and one more
  * string on a surface whose whole design is that it says as little as possible.
+ *
+ * The status node is empty here even after a code that did not match: the line
+ * that answer earned is taken away the moment the next attempt is sent, so that
+ * the same answer coming back is a change the region can announce.
  */
 const SHELL_SENDING = `- main:
   - heading "PatientScribe" [level=1]
@@ -167,6 +206,7 @@ const SHELL_SENDING = `- main:
     - text: Code
     - textbox "Code": ${TYPED_CODE}
     - button "Open the note" [disabled]
+  - status
   - group: For people viewing a shared note.
   - button "Report a problem with this link"`;
 
@@ -972,6 +1012,12 @@ async function putAwayWithoutReturning(page) {
  * being asked here is whether the act of putting the page away took each section
  * off, and a section that is off has nothing in a snapshot to read.
  *
+ * One of them is read by its text as well, because that is how the viewer shows
+ * it. The line a code that did not match earns is a status region that is never
+ * hidden — a screen reader announces a change to what such a region says, not a
+ * change to whether it is shown — so it is on screen when it has something to
+ * say, and this reads it as showing then and only then.
+ *
  * @param {import('@playwright/test').Page} page
  * @returns {Promise<string[]>} The ids still showing, in document order.
  */
@@ -982,7 +1028,8 @@ async function showing(page) {
     const on = [];
     for (const id of ['advisory', 'shell', 'wrong-code', 'note', 'unavailable', 'footer']) {
       const element = inPage['document'].getElementById(id);
-      if (element !== null && element.hidden !== true) {
+      const says = id !== 'wrong-code' || String(element?.textContent ?? '').length > 0;
+      if (element !== null && element.hidden !== true && says) {
         on.push(String(id));
       }
     }
@@ -1061,11 +1108,15 @@ async function emptyingAttempts(page) {
  *
  * Every load below carries a query nothing else does, and it has to. A
  * navigation that differs from the current address only in its fragment is not a
- * navigation at all — the browser treats it as a move within the same document,
- * and the entry point never runs a second time. Since the first thing the entry
- * point does is take the fragment off the address bar, every load after the
- * first would be exactly that: same path, new fragment, no boot, and a test
- * driving a page that is still showing whatever the last one left.
+ * load — the browser treats it as a move within the same document. The entry
+ * point answers that move by asking for the page again, so the new link is read
+ * by a fresh boot, but it is read after `goto` has already returned: the harness
+ * waits for a load, a move within a document has none to wait for, and the
+ * reload it sets off lands underneath whatever the test does next. Since the
+ * first thing the entry point does is take the fragment off the address bar,
+ * every load after the first would be exactly that — same path, new fragment —
+ * and a test driving a page that is about to be replaced. The query makes each
+ * open a load of its own, which the harness waits for.
  *
  * @type {WeakMap<import('@playwright/test').Page, number>}
  */
@@ -2601,6 +2652,438 @@ test('the expiry is the moment it was sealed with, spelled the one way', async (
   expect(await page.locator('#expiry').textContent()).toMatch(
     /^This link works until (?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec), \d{1,2}:\d{2} (?:am|pm)$/,
   );
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('a second link opened into the page loads that link, and leaves nothing of the first', async ({ page, baseURL }) => {
+  // A browser that already has this page open can be handed another share link
+  // for it, and where the new address differs from the open one only in its
+  // fragment the browser loads nothing: it moves within the document it has and
+  // changes the address. That is what a phone's browser does with a link an
+  // application passes it while one of its tabs is showing this page. The entry
+  // point reads the fragment once, at boot, so a page that did nothing with the
+  // move went on showing whatever the first link left, with the second link's
+  // capability sitting in the address bar the boot exists to empty.
+  //
+  // So the move is made here, from inside the page, on a page showing a note —
+  // the address is given the second link's fragment and nothing else — and what
+  // is read is what a recipient would be looking at afterwards: a fresh shell for
+  // the second link, nothing of the first link's note anywhere in the page, an
+  // address with no fragment in it, and no share asked for until a code is
+  // typed. What happens to the document being left is read elsewhere in this
+  // file, by the test that puts a page away; this reads the one that replaces it.
+  //
+  // The wait for the load is bounded, and that is what makes a page that ignores
+  // the move fail here, on that line, rather than at the end of the test's time.
+  const seen = watch(page, baseURL);
+  const second = fixtureNamed('nameless');
+  expect(second.inputs.id, 'the two links name the same share, so the second opens nothing new').not.toBe(
+    named.inputs.id,
+  );
+
+  /** @type {{ url: string, body: string | null }[]} */
+  const sent = [];
+  page.on('request', (request) => {
+    sent.push({ url: request.url(), body: request.postData() });
+  });
+
+  // Each share answered for the identifier the request names, so the note drawn
+  // at the end is the second link's only if the second link is what was asked
+  // for.
+  await page.route(shareOpenAt(baseURL), (route) => {
+    const id = String(JSON.parse(route.request().postData() ?? '{}').id ?? '');
+    const fixture = [named, second].find((one) => one.inputs.id === id);
+    return fixture === undefined
+      ? route.fulfill({ status: 410, body: '' })
+      : route.fulfill({ status: 200, contentType: 'application/json', body: shareBody(fixture) });
+  });
+
+  // The first link, and its note.
+  await openLink(page, fragmentFor(named));
+  await enterCode(page);
+  await expect(page.locator('#note')).toBeVisible();
+  expect(await surfaceOf(page)).toBe(decryptedSurface(named.inputs.plaintext, named.inputs.aad));
+  const mark = sent.length;
+
+  // The second link, as a move within this document.
+  const reloaded = page.waitForEvent('load', { timeout: 10_000 });
+  await page.evaluate((fragment) => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    inPage['location'].hash = String(fragment);
+  }, fragmentFor(second));
+  await reloaded;
+
+  // A fresh shell, for the second link.
+  expect(await surfaceOf(page)).toBe(SHELL);
+
+  // And nothing of the first: not its words, not what was typed for it, not its
+  // link, and not the second link's fragment either, which the fresh boot took
+  // off the address bar as the first one did.
+  const doc = JSON.parse(named.inputs.plaintext);
+  const text = await page.evaluate(() => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    return String(inPage['document'].documentElement.textContent ?? '');
+  });
+  for (const [what, word] of [
+    ['banner', doc.banner_text],
+    ['topic', doc.topic],
+    ['first heading', doc.sections[0].heading],
+  ]) {
+    expect(text, `the first link's ${what} is still in the page the second link loaded`).not.toContain(word);
+  }
+  expect(await residueIn(page, [named.inputs.a, TYPED_CODE, fragmentFor(named)])).toEqual([]);
+  expect(
+    await page.evaluate(() => {
+      const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+      return String(inPage['location'].hash);
+    }),
+  ).toBe('');
+
+  // What the move cost: the page, asked for again from its own origin, and no
+  // share. Which of the page's modules each engine asks for again is the
+  // engine's business and is not pinned; that the document was asked for, and
+  // that nothing under the share paths was, is.
+  const since = sent.slice(mark).map((request) => new URL(request.url).pathname);
+  expect(since, 'the page was not asked for again, so nothing loaded the second link').toContain('/index.html');
+  expect(
+    since.filter((path) => path.startsWith('/prod/share/')),
+    'a share was asked for before a code was typed into the page the second link loaded',
+  ).toEqual([]);
+
+  // And the second link works: a code goes in, the request names the second
+  // link's share, and its note is drawn.
+  await enterCode(page);
+  await expect(page.locator('#note')).toBeVisible();
+  const opens = sent.slice(mark).filter((request) => new URL(request.url).pathname === '/prod/share/open');
+  expect(opens.length).toBe(1);
+  expect(JSON.parse(opens[0]?.body ?? '{}').id).toBe(second.inputs.id);
+  expect(await surfaceOf(page)).toBe(decryptedSurface(second.inputs.plaintext, second.inputs.aad));
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the line a code that did not match earns is a status region, and the focus is back in the field', async ({
+  page,
+  baseURL,
+}) => {
+  // The line is the one thing this surface says, and a screen reader has to say
+  // it without being sent looking for it. Pressing the control disables it while
+  // the request is out, and a screen reader's reading position can go with it —
+  // so the line is written into a status region, which is announced when what it
+  // says changes, and the focus is put back in the field, which is where a
+  // recipient acts next and still holds what they typed.
+  //
+  // No reading here hears anything. What is read is what the announcement rests
+  // on: the region's role, what it says on each surface, and where the focus is.
+  // And the region is required to say nothing everywhere else — while an attempt
+  // is out, on the surface every failure ends on, on a note, and on a page put
+  // away — because a second wrong code is only a change the region can announce
+  // if the line was emptied when that attempt went out.
+  const seen = watch(page, baseURL);
+  const line = page.locator('#wrong-code');
+  const field = page.locator('#code-input');
+
+  // What the stand-in answers next, and whether it holds that answer back until
+  // this test lets go of it.
+  const next = { body: '{"status":"wrong_code"}', hold: false };
+  let holding = 0;
+  /** @type {() => void} */
+  let release = () => {};
+  await page.route(shareOpenAt(baseURL), async (route) => {
+    if (next.hold) {
+      await new Promise((resolve) => {
+        release = () => resolve(undefined);
+        holding += 1;
+      });
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: next.body });
+  });
+
+  // A code that did not match, sent by the control.
+  await openLink(page, fragmentFor(named));
+  await enterCode(page);
+  await expect(line).toHaveAttribute('role', 'status');
+  await expect(line).toHaveText(WRONG_CODE_LINE);
+  await expect(field, 'the focus is not back in the field the code was typed into').toBeFocused();
+  await expect(field).toHaveValue(TYPED_CODE);
+
+  // A second attempt, held while it is out: the line goes, and the control
+  // cannot be pressed. Then the same answer again, and the line comes back.
+  next.hold = true;
+  await page.locator('#code-submit').click();
+  await expect.poll(() => holding).toBe(1);
+  await expect(line, 'the verdict on the last attempt is still there while the next one is out').toHaveText('');
+  await expect(page.locator('#code-submit')).toBeDisabled();
+  next.hold = false;
+  release();
+  await expect(line).toHaveText(WRONG_CODE_LINE);
+  await expect(field, 'the focus is not back in the field after the second attempt').toBeFocused();
+  await expect(field).toHaveValue(TYPED_CODE);
+
+  // The surface every failure ends on, reached from here: the line says nothing.
+  next.body = '{"status":"unavailable"}';
+  await page.locator('#code-submit').click();
+  await expect(page.locator('#unavailable')).toBeVisible();
+  await expect(line).toHaveText('');
+
+  // A note, on a fresh page, reached the way a recipient who mistyped reaches it
+  // — a wrong code first, so there is a line to take away — and the line says
+  // nothing.
+  next.body = '{"status":"wrong_code"}';
+  await openLink(page, fragmentFor(named));
+  await enterCode(page);
+  await expect(line).toHaveText(WRONG_CODE_LINE);
+  next.body = shareBody(named);
+  await page.locator('#code-submit').click();
+  await expect(page.locator('#note')).toBeVisible();
+  await expect(line).toHaveText('');
+
+  // And a page put away while the line is showing, with nothing sent in between:
+  // the going empties it.
+  next.body = '{"status":"wrong_code"}';
+  await openLink(page, fragmentFor(named));
+  await enterCode(page);
+  await expect(line).toHaveText(WRONG_CODE_LINE);
+  await putAwayWithoutReturning(page);
+  await expect(line).toHaveText('');
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('a press with nothing typed sends nothing, and draws the line a wrong code earns', async ({ page, baseURL }) => {
+  // An empty field is refused by the server as a malformed request, and the page
+  // can only draw that as the surface every failure ends on — telling a recipient
+  // whose typing did not land that the share is gone. A field of nothing but a
+  // short run of spaces the server takes, reduces to nothing, and counts as a
+  // wrong code. So a press with nothing typed is refused on the page, before
+  // anything is sent, with the line this surface already has for a code that did
+  // not work.
+  //
+  // Both ways a code can be sent, for both spellings of nothing, each from a
+  // page just opened, so that what one press drew cannot stand in for what the
+  // next one draws. The count of requests is read after a pause long enough for
+  // a request that was going to be made to have reached the stand-in; the last
+  // reading shows that a code still goes, which is what says the refusal did
+  // not leave the page stuck.
+  const seen = watch(page, baseURL);
+  const field = page.locator('#code-input');
+
+  let asked = 0;
+  await page.route(shareOpenAt(baseURL), (route) => {
+    asked += 1;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"wrong_code"}' });
+  });
+
+  // Nothing at all, by the control.
+  await openLink(page, fragmentFor(named));
+  expect(await surfaceOf(page)).toBe(SHELL);
+  await expect(field).toHaveValue('');
+  await page.locator('#code-submit').click();
+  await expect(field, 'the focus is not in the field after a press with nothing typed').toBeFocused();
+  await page.waitForTimeout(150);
+  expect(asked, 'a press with nothing typed sent a request').toBe(0);
+  expect(await surfaceOf(page)).toBe(WRONG_CODE_NOTHING_TYPED);
+
+  // Nothing at all, by the return key.
+  await openLink(page, fragmentFor(named));
+  expect(await surfaceOf(page)).toBe(SHELL);
+  await expect(field).toHaveValue('');
+  await field.press('Enter');
+  await expect(field, 'the focus is not in the field after the return key with nothing typed').toBeFocused();
+  await page.waitForTimeout(150);
+  expect(asked, 'the return key with nothing typed sent a request').toBe(0);
+  expect(await surfaceOf(page)).toBe(WRONG_CODE_NOTHING_TYPED);
+
+  // Nothing but spaces, by the control; the field keeps what is in it.
+  await openLink(page, fragmentFor(named));
+  expect(await surfaceOf(page)).toBe(SHELL);
+  await field.fill('   ');
+  await page.locator('#code-submit').click();
+  await expect(field, 'the focus is not in the field after a press with only spaces typed').toBeFocused();
+  await page.waitForTimeout(150);
+  expect(asked, 'a press with only spaces typed sent a request').toBe(0);
+  expect(await surfaceOf(page)).toBe(WRONG_CODE_NOTHING_TYPED);
+  await expect(field).toHaveValue('   ');
+
+  // Nothing but spaces, by the return key.
+  await openLink(page, fragmentFor(named));
+  expect(await surfaceOf(page)).toBe(SHELL);
+  await field.fill('   ');
+  await field.press('Enter');
+  await expect(field, 'the focus is not in the field after the return key with only spaces typed').toBeFocused();
+  await page.waitForTimeout(150);
+  expect(asked, 'the return key with only spaces typed sent a request').toBe(0);
+  expect(await surfaceOf(page)).toBe(WRONG_CODE_NOTHING_TYPED);
+  await expect(field).toHaveValue('   ');
+
+  // And a code still goes, which is what says the page is still ready.
+  await enterCode(page);
+  await expect.poll(() => asked).toBe(1);
+  await expect(page.locator('#wrong-code')).toHaveText(WRONG_CODE_LINE);
+  expect(await surfaceOf(page)).toBe(WRONG_CODE);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the code-entry surface reflows at three times the text size on a phone, and at twice it at the narrow width', async ({
+  page,
+  baseURL,
+}) => {
+  // The test "the page reflows at a narrow width and at twice the text size"
+  // reads the note at twice the text size, and the shell only at the default
+  // size. That was the gap: at the largest text a phone's browser
+  // offers, the control that sends a code is wider than the row it sits in, and
+  // a control that neither shrinks nor wraps pushes the page sideways. Three
+  // times the root size at a phone's width is that setting — the stylesheet is
+  // sized in relative units, so the page lays out as it does there — and twice
+  // the root size at the narrow width is the requirement the stylesheet states.
+  //
+  // Both the shell and the shell with the line a code that did not match earns,
+  // at each. The text size is set again after every open, because a load puts
+  // the root's own style back to nothing.
+  const seen = watch(page, baseURL);
+  await page.route(shareOpenAt(baseURL), (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"wrong_code"}' }),
+  );
+
+  const overflows = () =>
+    page.evaluate(() => {
+      const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+      const root = inPage['document'].documentElement;
+      return Number(root.scrollWidth) - Number(root.clientWidth);
+    });
+
+  /** @param {string} size */
+  const textAt = (size) =>
+    page.evaluate((value) => {
+      const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+      inPage['document'].documentElement.style.fontSize = String(value);
+    }, size);
+
+  /** @type {[number, number, string][]} */
+  const settings = [
+    [402, 874, '300%'],
+    [320, 640, '200%'],
+  ];
+  for (const [width, height, size] of settings) {
+    await page.setViewportSize({ width, height });
+    await openLink(page, fragmentFor(named));
+    await textAt(size);
+    expect(await overflows(), `the shell scrolls sideways at ${width}px with the text at ${size}`).toBeLessThanOrEqual(0);
+    await expect(page.locator('#code-submit')).toBeVisible();
+
+    await enterCode(page);
+    await expect(page.locator('#wrong-code')).toBeVisible();
+    expect(
+      await overflows(),
+      `a code that did not match scrolls sideways at ${width}px with the text at ${size}`,
+    ).toBeLessThanOrEqual(0);
+    await expect(page.locator('#code-submit')).toBeVisible();
+  }
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the code field asks for a number pad, corrects nothing, and belongs to no form', async ({ page, baseURL }) => {
+  // What a phone's keyboard does with the field is decided by the field's own
+  // attributes, and they are written into the page rather than set by any code:
+  // a number pad asked for, the digits-only pattern as a hint to that keyboard
+  // (the field's own validity state is not read by anything here), and no
+  // capital letter or correction put into what is typed. A code a recipient
+  // pastes is sent as it was pasted, and nothing submits it but the control and
+  // the return key — so there is no form, and no validity of the field's own
+  // that a form could refuse a press over.
+  //
+  // Read by name, whole, so an attribute added to the field is a failure here as
+  // well as in the page inventory the smoke suite reads.
+  const seen = watch(page, baseURL);
+  await openLink(page, fragmentFor(named));
+
+  const field = page.locator('#code-input');
+  const names = await page.evaluate(() => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    return Array.from(inPage['document'].getElementById('code-input').getAttributeNames(), String);
+  });
+  expect(names).toEqual(['id', 'type', 'inputmode', 'pattern', 'autocapitalize', 'autocorrect']);
+  await expect(field).toHaveAttribute('type', 'text');
+  await expect(field).toHaveAttribute('inputmode', 'numeric');
+  await expect(field).toHaveAttribute('pattern', '[0-9]*');
+  await expect(field).toHaveAttribute('autocapitalize', 'none');
+  await expect(field).toHaveAttribute('autocorrect', 'off');
+  await expect(page.locator('form')).toHaveCount(0);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('a second link opened while a wrong code is still typed leaves the field empty', async ({ page, baseURL }) => {
+  // The test "a second link opened into the page loads that link, and leaves
+  // nothing of the first" makes the move from a note, where the field is already
+  // empty. This makes it from a surface where the field still holds
+  // something: a code that did not match, left there for a retype. A browser can
+  // put what a field held back into the document it loads in place of the one
+  // it left, and a code put back there would be a code typed for the first link
+  // sitting in the page the second link loaded. So what is read is the field,
+  // empty; nothing of that code, of the first link's capability or of its
+  // fragment in any value or attribute on the page; an address with no fragment
+  // in it; and no share asked for.
+  //
+  // The wait for the load is bounded here too, so a page that ignores the move
+  // fails on that line rather than at the end of the test's time.
+  const seen = watch(page, baseURL);
+  const second = fixtureNamed('nameless');
+  const field = page.locator('#code-input');
+
+  /** @type {string[]} */
+  const sent = [];
+  page.on('request', (request) => {
+    sent.push(request.url());
+  });
+
+  await page.route(shareOpenAt(baseURL), (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"wrong_code"}' }),
+  );
+
+  // The first link, and a code that did not match, still in the field.
+  await openLink(page, fragmentFor(named));
+  await enterCode(page);
+  await expect(page.locator('#wrong-code')).toHaveText(WRONG_CODE_LINE);
+  expect(await surfaceOf(page)).toBe(WRONG_CODE);
+  await expect(field).toHaveValue(TYPED_CODE);
+  const mark = sent.length;
+
+  // The second link, as a move within this document.
+  const reloaded = page.waitForEvent('load', { timeout: 10_000 });
+  await page.evaluate((fragment) => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    inPage['location'].hash = String(fragment);
+  }, fragmentFor(second));
+  await reloaded;
+
+  // A fresh shell, with nothing in the field, and nothing of the first link
+  // anywhere the page keeps a value.
+  expect(await surfaceOf(page)).toBe(SHELL);
+  await expect(field, 'what was typed for the first link came back into the field').toHaveValue('');
+  expect(await residueIn(page, [TYPED_CODE, named.inputs.a, fragmentFor(named)])).toEqual([]);
+  expect(
+    await page.evaluate(() => {
+      const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+      return String(inPage['location'].hash);
+    }),
+  ).toBe('');
+
+  // And no share asked for since the move.
+  const since = sent.slice(mark).map((url) => new URL(url).pathname);
+  expect(
+    since.filter((path) => path.startsWith('/prod/share/')),
+    'a share was asked for before a code was typed into the page the second link loaded',
+  ).toEqual([]);
 
   expect(seen.errors).toEqual([]);
   expect(seen.all).toEqual([]);

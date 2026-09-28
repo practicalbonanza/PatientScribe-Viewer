@@ -10,8 +10,12 @@
  * against the colour actually behind it, computed from what the browser resolved
  * rather than from what is written here. And the page is required to lay out
  * without a horizontal scrollbar at a narrow width and at double the default
- * text size, which is why nothing here is given a fixed width and why long
- * unbroken text is allowed to break.
+ * text size, and the code-entry surface, with and without the line a code that
+ * did not match earns, at a phone's width with three times the default text
+ * size and at the narrow width with double it, which is why nothing here is
+ * given a fixed width, why the control that sends a code may shrink and wrap
+ * its words rather than hold them on one line, and why long unbroken text is
+ * allowed to break.
  *
  * `color-scheme` is declared so that a device in a dark theme is handed a page
  * that is deliberately light rather than one the browser has inverted on its
@@ -103,8 +107,12 @@ a {
   font: inherit;
 }
 
+/* The control shrinks, and wraps its words, rather than widen the row past the page. */
 #code-submit {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
   padding: 0.5rem 1rem;
   border: 1px solid transparent;
   border-radius: 6px;

@@ -60,12 +60,52 @@
  *    can be put away at any moment, and the handler that empties it is no use if
  *    it was attached after the first thing appeared.
  *
+ *    One more listener is attached beside them, and it is for a second link
+ *    rather than for the page going or coming back. When an application hands
+ *    Safari a link to a page one of its tabs is already showing, and the new
+ *    address differs from that tab's only in its fragment, the browser loads
+ *    nothing: it moves within the document it has, changes the address, and
+ *    announces the change to the page. Nothing in this file would run again.
+ *    Without a listener the tab goes on showing whatever the first link left —
+ *    a note, or the one unavailable line — with the second link's capability
+ *    sitting in the address bar that step 2 exists to keep it out of. Or it
+ *    goes on showing the first link's code field, with or without the line a
+ *    code that did not match earns, and a code typed there for the second link
+ *    would go out under the first link's identifier.
+ *
+ *    So the listener asks for the page again, and that is all it does. The
+ *    fresh document runs these five acts from the first: it reads the new
+ *    fragment and takes it off the address bar before it sends anything,
+ *    exactly as this one did. The document being left runs its put-away handler
+ *    on the way out, which blanks it and zeroes what it was holding. A reload
+ *    rather than starting over inside this document, because starting over in
+ *    place would mean resetting everything the flow holds and deciding what to
+ *    do with a request the first link may still have out — and there is already
+ *    one path that forgets everything, which is the page being put away.
+ *
+ *    What that costs is the page, asked for again from the origin it is served
+ *    from: its document, and its stylesheet and modules wherever the browser
+ *    does not reuse the ones it has. It asks for no share. The new document asks
+ *    for one only once a code has been typed into it, as the first one did.
+ *
+ *    Where in this function the listener is attached makes no difference to
+ *    what it hears, because the function runs to its end before the browser
+ *    delivers any event to the page, and the rewrite in step 2 announces
+ *    nothing. And it has bounds, named. Where the rewrite was refused, the
+ *    address still carries the first fragment, so opening that same link again
+ *    changes nothing and announces nothing, and the page stays as it is. A link
+ *    with no fragment at all announces nothing either, and is not a share link.
+ *    And nothing in this viewer writes the fragment, so nothing it does can set
+ *    the listener off, and there is no loop.
+ *
  * 4. The viewer root is resolved, once, by the one id the page gives it.
  *
  * 5. The text that never changes is written into it, once, before any state is
  *    shown.
  *
- * Then the captured fragment is handed to the flow, and this file is finished.
+ * Then the captured fragment is handed to the flow, and this file is finished,
+ * but for the one listener in step 3 that acts here rather than handing on to
+ * the flow: it stays attached, and all it ever does is ask for the page again.
  * Nothing else happens here: reading the link, talking to a server, deciding
  * what is on screen and writing it are each somewhere a reader can find all of
  * them at once, which is what keeps this a wiring point rather than the place
@@ -107,6 +147,12 @@ function boot() {
   });
   window.addEventListener('pageshow', (event) => {
     onPageShow(root, event.persisted);
+  });
+  // A second link into this page, arrived as a move within it. The page is
+  // asked for again, so a fresh document reads the new fragment and takes it
+  // off the address bar; step 3 above says why a reload, and what it costs.
+  window.addEventListener('hashchange', () => {
+    location.reload();
   });
 
   root = document.getElementById(ROOT_ID);

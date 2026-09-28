@@ -228,6 +228,12 @@ export const REQUIRED_TESTS = Object.freeze({
     'every text on every surface reaches the contrast it has to',
     'the page reflows at a narrow width and at twice the text size',
     'the expiry is the moment it was sealed with, spelled the one way',
+    'a second link opened into the page loads that link, and leaves nothing of the first',
+    'the line a code that did not match earns is a status region, and the focus is back in the field',
+    'a press with nothing typed sends nothing, and draws the line a wrong code earns',
+    'the code-entry surface reflows at three times the text size on a phone, and at twice it at the narrow width',
+    'the code field asks for a number pad, corrects nothing, and belongs to no form',
+    'a second link opened while a wrong code is still typed leaves the field empty',
   ]),
   // The half of the release check that needs a browser. Neither of these can be
   // reached from a socket: what a browsing context is left holding after a page

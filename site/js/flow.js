@@ -24,7 +24,9 @@
  *     browser can do the work at all. It never touches a recipient's share, and
  *     what it produces is advice rather than a block.
  *   - A code is typed and sent. What comes back is classified into exactly three
- *     outcomes, and two of them are the same surface.
+ *     outcomes, and two of them are the same surface. A press with nothing
+ *     typed — an empty field, or one holding only whitespace — sends nothing,
+ *     and draws the line a code that did not match earns.
  *
  * The classification is a pure function and so is the identifier comparison, so
  * both can be put to a corpus over inputs no server would ever send. What is not
@@ -111,6 +113,10 @@ export const DECRYPT = 'decrypt';
  * moment an answer arrives — which on the path to a note is before the note is
  * drawn, and on the path to the generic surface is before that line is. So it is
  * what a recipient sees rather than what holds this.
+ *
+ * A press with nothing typed is not a submit. It is refused where the submit
+ * begins, after the state is read and before it moves, so it leaves `ready`
+ * where it was, sends nothing, and puts nothing in flight.
  */
 export const READY = 'ready';
 export const SENDING = 'sending';
@@ -242,6 +248,12 @@ function jsonText(text) {
  * is the side that decides that — a viewer that normalised would be a second
  * opinion about which codes match.
  *
+ * That stays true of the one value the page declines to send. A field with
+ * nothing typed in it — empty, or whitespace and nothing else — is refused
+ * before a body is built at all, and `submit` says why. The refusal reads the
+ * value and sends nothing; it does not change what is sent when something was
+ * typed.
+ *
  * @param {string} id The identifier, encoded.
  * @param {string} code
  * @returns {string}
@@ -345,11 +357,27 @@ export function start(root, fragment) {
 /**
  * Ask for the share, and act on what comes back.
  *
+ * Unless nothing was typed. A field that is empty, or that holds nothing but
+ * whitespace, is refused here — after the state is read and before it moves —
+ * with the line a code that did not match earns, and nothing is sent. The
+ * server would refuse the first as a malformed request, which this page can
+ * only draw as the surface every failure ends on, telling a recipient whose
+ * typing did not land that the share is gone. The second — a short run of
+ * spaces — it would take, reduce to nothing and count as a wrong code, spending
+ * one of the link's attempts on something nobody typed. Whitespace is where the
+ * line is drawn: a value with anything else in it is sent exactly as it was
+ * typed, even one the server will go on to reduce to nothing.
+ *
  * @param {unknown} root
  * @returns {Promise<void>}
  */
 async function submit(root) {
   if (state !== READY || held === null) {
+    return;
+  }
+  const code = readCode(root);
+  if (!/\S/.test(code)) {
+    renderWrongCode(root);
     return;
   }
   const params = held;

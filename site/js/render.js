@@ -3,10 +3,11 @@
  *
  * The only module permitted to write to the DOM. Everything a recipient sees is
  * written from here, and the rules it writes under are narrow on purpose: text
- * into elements, and the `hidden` property to decide which of them are on
- * screen. It must not accept markup, must not build markup, must not linkify,
- * must not construct a URL or a style from anything a document carried, and must
- * offer nothing to save or print.
+ * into elements, the `hidden` property to decide which of them are on screen,
+ * and one move of the focus — to the code field, after a code that did not
+ * match, or a press with nothing typed. It must not accept markup, must not
+ * build markup, must not linkify, must not construct a URL or a style from
+ * anything a document carried, and must offer nothing to save or print.
  *
  * The page is static. `index.html` carries every element of every state, with
  * the ones that are not the neutral base marked hidden, and this module reveals
@@ -16,6 +17,15 @@
  * destinations are never touched by any code at all. There is one place elements
  * are created, and it is the body of a decrypted note, where the number of
  * headings and lines is whatever the sender wrote.
+ *
+ * One element is never hidden, and it is the exception on purpose: the line a
+ * code that did not match earns. It is a status region, always on the page,
+ * that says nothing until it has something to say — written when that answer is
+ * drawn, and emptied on every other surface and whenever a code is sent. A
+ * screen reader announces a change to what a status region says, not a change
+ * to whether it is shown, and a line revealed by `hidden` is a line that can go
+ * unspoken. So this one is written into and emptied rather than revealed and
+ * hidden.
  *
  * It renders only what a validator has already admitted. Rendering is not a
  * place where a decision gets made about whether input is acceptable — by the
@@ -191,8 +201,12 @@ export function clearRoot(node) {
  * Whole or nothing: a page missing one region is not a page this module can
  * drive, and half a surface is worse than none. The two regions whose type
  * matters beyond being an element are checked for the property that makes them
- * that type — a field has a string value, a control has a boolean disabled state
- * — so the shapes this module goes on to use are shapes it has looked at.
+ * that type — a field has a string value and a focus that can be called, a
+ * control has a boolean disabled state — so the shapes this module goes on to
+ * use are shapes it has looked at. The field's focus is looked at because this
+ * module calls it, and a call to something that is not a function throws. The
+ * call itself is guarded as well, because a call to something that is can still
+ * throw.
  *
  * Guarded throughout, because the value handed in is whatever a caller passed
  * and a hostile one can throw when it is looked at.
@@ -226,6 +240,9 @@ export function readPage(root) {
     }
 
     if (typeof /** @type {Record<string, unknown>} */ (found['codeInput'])['value'] !== 'string') {
+      return null;
+    }
+    if (typeof /** @type {Record<string, unknown>} */ (found['codeInput'])['focus'] !== 'function') {
       return null;
     }
     for (const name of ['codeSubmit', 'report']) {
@@ -280,6 +297,10 @@ function blankNote(page) {
  * the page. The destinations are the one thing no code here touches, so the
  * anchors stay exactly where they were put and only their text is written.
  *
+ * The line a code that did not match earns is not written here: it is written
+ * when it is earned and emptied otherwise, for the reason given at the top of
+ * this module.
+ *
  * @param {unknown} root
  * @returns {void}
  */
@@ -294,7 +315,6 @@ export function renderChrome(root) {
   page.codeHelper.textContent = COPY.codeHelper;
   page.codeLabel.textContent = COPY.codeLabel;
   page.codeSubmit.textContent = COPY.codeSubmit;
-  page.wrongCode.textContent = COPY.wrongCode;
   page.unavailable.textContent = COPY.unavailable;
   page.appLink.textContent = COPY.appBanner;
   page.report.textContent = COPY.reportControl;
@@ -327,7 +347,7 @@ export function renderShell(root) {
 
   page.note.hidden = true;
   page.unavailable.hidden = true;
-  page.wrongCode.hidden = true;
+  page.wrongCode.textContent = '';
   page.shell.hidden = false;
   page.footer.hidden = false;
   page.report.hidden = false;
@@ -353,9 +373,26 @@ export function showAdvisory(root) {
 /**
  * The shell, plus the one line a code that did not match earns.
  *
- * One line, and nothing else changes: the field keeps what a recipient typed and
- * stays usable. There is no attempt count here because there is nowhere for one
- * to go — what it would tell a recipient it would tell anyone holding the link.
+ * One line, and the focus back in the field, and nothing else changes: the field
+ * keeps what a recipient typed and stays usable. There is no attempt count here
+ * because there is nowhere for one to go — what it would tell a recipient it
+ * would tell anyone holding the link.
+ *
+ * The line is written into the status region that is always on the page, so
+ * that it is announced as it appears. The focus goes to the field because it is
+ * where a recipient acts next, still holding what they typed, so a retype starts
+ * from where they were. Not to the line itself: the region already speaks the
+ * line, and a recipient put on it would have to find their way back to the
+ * field to do anything about it. After a code that was sent there is a second
+ * reason as well: the control was disabled while the request was out, and a
+ * screen reader's reading position can go with the control. A press with
+ * nothing typed draws the same line and the same focus, and the focus for one
+ * reason only — the field is where they act next — since nothing was sent and
+ * nothing was disabled; the flow refuses that press without sending anything.
+ *
+ * The move is guarded the way the clear is: a field that has a focus to call can
+ * still throw when it is called, and a field that refuses the focus leaves the
+ * same surface drawn, with the focus wherever it already was.
  *
  * @param {unknown} root
  * @returns {void}
@@ -373,9 +410,16 @@ export function renderWrongCode(root) {
   page.note.hidden = true;
   page.unavailable.hidden = true;
   page.shell.hidden = false;
-  page.wrongCode.hidden = false;
+  page.wrongCode.textContent = COPY.wrongCode;
   page.footer.hidden = false;
   page.report.hidden = false;
+
+  try {
+    page.codeInput.focus();
+  } catch {
+    // Refused, and the surface above is drawn either way. There is nowhere to
+    // report it and nothing else to try.
+  }
 }
 
 /**
@@ -419,7 +463,7 @@ export function renderUnavailable(root, showReport) {
 
   page.advisory.hidden = true;
   page.shell.hidden = true;
-  page.wrongCode.hidden = true;
+  page.wrongCode.textContent = '';
   page.note.hidden = true;
   page.unavailable.hidden = false;
   page.footer.hidden = false;
@@ -529,7 +573,7 @@ export function renderShareDocV1(root, aad, doc) {
 
   page.advisory.hidden = true;
   page.shell.hidden = true;
-  page.wrongCode.hidden = true;
+  page.wrongCode.textContent = '';
   page.unavailable.hidden = true;
   page.note.hidden = false;
   page.footer.hidden = false;
@@ -586,8 +630,8 @@ function isRenderable(aad, doc) {
  * Take everything off the page and empty what a note was drawn into.
  *
  * The act the viewer performs when the page is being put away: every surface
- * hidden, the code field's value gone, and the note's body emptied and its lines
- * written back to nothing.
+ * hidden, the line a code that did not match earned emptied, the code field's
+ * value gone, and the note's body emptied and its lines written back to nothing.
  *
  * That last part is the one with a condition on it, and the condition is not
  * checked here. Emptying the body reports whether the body is empty afterwards,
@@ -612,7 +656,7 @@ export function blankSurface(root) {
   blankNote(page);
   page.advisory.hidden = true;
   page.shell.hidden = true;
-  page.wrongCode.hidden = true;
+  page.wrongCode.textContent = '';
   page.note.hidden = true;
   page.unavailable.hidden = true;
   page.footer.hidden = true;
@@ -648,6 +692,14 @@ export function readCode(root) {
  * to say by not being pressable, and a line of status text would be a surface
  * with two spellings.
  *
+ * Sending does empty one line: the one a code that did not match earned. A new
+ * attempt retires the verdict on the last one, and the line has to be emptied
+ * for a second wrong code to be a change the status region announces — the same
+ * sentence written over itself is not a change. So the line is gone while a
+ * request is out, and comes back if the answer is the same one. The control
+ * coming back writes nothing to it: the answer that follows decides what the
+ * line says.
+ *
  * @param {unknown} root
  * @param {boolean} busy
  * @returns {void}
@@ -658,6 +710,9 @@ export function setSubmitBusy(root, busy) {
     return;
   }
   page.codeSubmit.disabled = busy === true;
+  if (busy === true) {
+    page.wrongCode.textContent = '';
+  }
 }
 
 /**

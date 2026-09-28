@@ -681,14 +681,20 @@ test('the browser path is invoked through the runner that fails closed, and both
       'a decrypted note is not left on the page underneath a later surface',
       'a decrypted note is the document that was sealed, and carries nothing of the link',
       'a page that comes back out of the cache shows nothing it was showing',
+      'a press with nothing typed sends nothing, and draws the line a wrong code earns',
       'a probe that answers late does not draw advice over a surface that is finished',
+      'a second link opened into the page loads that link, and leaves nothing of the first',
+      'a second link opened while a wrong code is still typed leaves the field empty',
       'a wrong code can be tried again, and a body that is nearly one cannot',
       'each state the viewer can be in is the surface it is pinned to be',
       'every failure the viewer can reach draws the same surface',
       'every text on every surface reaches the contrast it has to',
       'putting the page away empties it, before anything can be drawn over it',
       'reporting a link sends the identifier and nothing else',
+      'the code field asks for a number pad, corrects nothing, and belongs to no form',
+      'the code-entry surface reflows at three times the text size on a phone, and at twice it at the narrow width',
       'the expiry is the moment it was sealed with, spelled the one way',
+      'the line a code that did not match earns is a status region, and the focus is back in the field',
       'the link is out of the address bar before anything is sent, and nothing sent carries it',
       'the page reflows at a narrow width and at twice the text size',
     ],
@@ -1500,7 +1506,7 @@ test('the stylesheet the viewer ships is the stylesheet that was reviewed', () =
   const stylesheet = readFileSync(fileURLToPath(new URL('../../site/css/viewer.css', import.meta.url)));
   assert.equal(
     createHash('sha256').update(stylesheet).digest('hex'),
-    'd16b68a1d972f2da8627a9cc91cc610c6e437edbfe786c6dbe9aecbe78d445e6',
+    '105aa4879f8036b5432b7dcdd80b06ec030bb5b5e823c21d5774d1626486c6c7',
     'the served stylesheet is not the one this pin was computed from — if the change was deliberate, ' +
       'the new value goes here in the same change that makes it',
   );
