@@ -4,6 +4,10 @@
  * Usage:
  *   node scripts/infra/scan-private-values.mjs            scans the tree
  *   node scripts/infra/scan-private-values.mjs <dir>...   scans the given paths
+ *   node scripts/infra/scan-private-values.mjs --overlay <path> [<dir>...]
+ *                                                         the same, looking for
+ *                                                         the values of the
+ *                                                         overlay at <path>
  *   node scripts/infra/scan-private-values.mjs --self-test
  *
  * Exit codes: 0 = clean, 1 = something matched, 2 = the scan could not run.
@@ -13,21 +17,36 @@
  * kind of thing that stays true for as long as everyone remembers it and then
  * quietly stops.
  *
- * One deploy-time value is an exception to the second half of that, and it is
- * named here rather than taught to the code below. `ApiOrigin` is supplied from
- * the overlay like the others and is public by design: it rides the
- * `connect-src` of the security policy on every response the hosting serves, and
- * the served bytes carry it too — in the committed origin table, which decides
- * where a share code travels, and in the entry document's own policy, which has
- * to permit what that table decides. So an overlay-present run reports it at
- * every file that carries it, and those reports are an expected set that is
- * adjudicated at review. No allowlist is added for it: the allowlist here is
+ * Two deploy-time values are exceptions to the second half of that, and they
+ * are named here rather than taught to the code below. `ApiOrigin` and
+ * `DomainName` are supplied from the overlay like the others and are public by
+ * design. `ApiOrigin` rides the `connect-src` of the security policy on every
+ * response the hosting serves, and the served bytes carry it too — in the
+ * committed origin table, which decides where a share code travels, and in the
+ * entry document's own policy, which has to permit what that table decides.
+ * `DomainName` is the alias the production viewer is served under, and the
+ * served bytes carry it as well: it is the origin the committed table is keyed
+ * on for that flavour, written there with its scheme, because it is the address
+ * in every production share link. A development overlay's `DomainName` is empty,
+ * and an empty value is never looked for, so only an overlay that carries one
+ * reports it. So a run with an overlay that carries them reports each at every
+ * file that carries it, and those reports are an expected set that is
+ * adjudicated at review. No allowlist is added for either: the allowlist here is
  * consulted only for the pattern rules, overlay values are reported
  * unconditionally, and which parameter a value came from is not carried this far
  * — so an entry that looked like it held would in fact have said nothing at all
  * about a CHANGED value. What catches that is the release check, which derives
  * its expected `connect-src` from the committed table and compares it against
  * the live response header.
+ *
+ * Which overlay is read. By default the one at `infra/parameters.json`, if it
+ * has been created locally at all, exactly as it always has been. `--overlay`
+ * names another — the drivers take the same option, because an overlay need not
+ * live in the checkout — and it changes which VALUES are looked for, never which
+ * files are read. A named overlay is held to more than the default one: a path
+ * that is not there, or a file that is not a parameters array, is a run that
+ * cannot say what it was looking for, and it exits 2 rather than scanning for
+ * nothing and calling the tree clean.
  *
  * The file set is `git ls-files --cached --others --exclude-standard`: the
  * tracked tree, plus every untracked file that is not ignored. The second half
@@ -65,7 +84,10 @@ import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** Where the deploy overlay lives, if it has been created locally at all. */
+/**
+ * Where the deploy overlay lives by default, if it has been created locally at
+ * all. `--overlay` names another; see `resolveArguments`.
+ */
 const OVERLAY = join(REPO_ROOT, 'infra', 'parameters.json');
 
 /**
@@ -268,6 +290,106 @@ export function overlayValues() {
 }
 
 /**
+ * Every literal value an overlay NAMED on the command line carries — or why
+ * this run cannot say.
+ *
+ * The same values `overlayValues` takes, skipped for the same two reasons, out
+ * of a file somebody pointed this run at. The difference is what a problem with
+ * the file means. The default overlay is optional: a checkout without one is
+ * how this runs in CI, and a missing file there is the ordinary case. A named
+ * one is not optional — somebody said which values to look for — so a path that
+ * is not there, a file that is not JSON, and a document that is not a
+ * parameters array are each a reason this run cannot say what it was looking
+ * for, and the caller exits 2 on it rather than scanning for nothing and
+ * reporting a clean tree.
+ *
+ * A parameters array is what the CLI reads: an array of objects, each carrying
+ * a string `ParameterKey` and a string `ParameterValue`. An empty array is one,
+ * and it carries no values.
+ *
+ * @param {string} file
+ * @returns {{ values: string[] } | { why: string }}
+ */
+export function namedOverlayValues(file) {
+  /** @type {string} */
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return { why: `the overlay ${file} cannot be read` };
+  }
+  /** @type {unknown} */
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { why: `the overlay ${file} is not JSON` };
+  }
+  if (!Array.isArray(parsed)) {
+    return { why: `the overlay ${file} is not a parameters array` };
+  }
+  /** @type {string[]} */
+  const values = [];
+  for (const [index, entry] of parsed.entries()) {
+    const record =
+      entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+        ? /** @type {Record<string, unknown>} */ (entry)
+        : null;
+    const key = record === null ? undefined : record['ParameterKey'];
+    const value = record === null ? undefined : record['ParameterValue'];
+    if (typeof key !== 'string' || typeof value !== 'string') {
+      return { why: `the overlay ${file} carries an entry, at ${index}, that is not a ParameterKey and a ParameterValue` };
+    }
+    if (value !== '' && !value.startsWith('REPLACE-ME')) {
+      values.push(value);
+    }
+  }
+  return { values };
+}
+
+/**
+ * What a run was asked to do, read off its command line.
+ *
+ * A pure function of the arguments and the working directory — nothing here
+ * touches the disk — so the self-test can ask where a run WOULD look for its
+ * overlay without any run looking there. That matters because the default path
+ * is where a real overlay lives, and a test that found out by running would be
+ * a test that reads one.
+ *
+ * `--overlay <path>` names the overlay, absolute or relative to the working
+ * directory, at most once. Every other argument is a path to scan, exactly as
+ * before the option existed, and without it the overlay is the default one.
+ *
+ * @param {readonly string[]} args The arguments after the script's own path.
+ * @param {string} [cwd]
+ * @returns {{ overlay: string, named: boolean, paths: string[] } | { why: string }}
+ */
+export function resolveArguments(args, cwd = process.cwd()) {
+  let overlay = OVERLAY;
+  let named = false;
+  /** @type {string[]} */
+  const paths = [];
+  for (let at = 0; at < args.length; at += 1) {
+    const one = String(args[at]);
+    if (one !== '--overlay') {
+      paths.push(one);
+      continue;
+    }
+    const value = args[at + 1];
+    if (value === undefined || value === '') {
+      return { why: '--overlay needs a path' };
+    }
+    if (named) {
+      return { why: '--overlay is given more than once, and a run looks for the values of one overlay' };
+    }
+    overlay = resolve(cwd, value);
+    named = true;
+    at += 1;
+  }
+  return { overlay, named, paths };
+}
+
+/**
  * @typedef {object} Violation
  * @property {string} file
  * @property {number} line
@@ -348,11 +470,27 @@ function fileSet(paths) {
 
 /**
  * @param {string[]} paths
+ * @param {{ overlay: string, named: boolean }} [which] The overlay whose values
+ *   are looked for; the default one unless a run named another.
  * @returns {number} process exit code
  */
-function scan(paths) {
+function scan(paths, which = { overlay: OVERLAY, named: false }) {
   const files = fileSet(paths);
-  const secrets = overlayValues();
+
+  /** @type {string[]} */
+  let secrets;
+  let source = 'the local overlay';
+  if (which.named) {
+    const read = namedOverlayValues(which.overlay);
+    if ('why' in read) {
+      process.stderr.write(`scan-private-values — cannot run: ${read.why}, so this run cannot say which values it is looking for\n`);
+      return 2;
+    }
+    secrets = read.values;
+    source = 'the overlay named on the command line';
+  } else {
+    secrets = overlayValues();
+  }
 
   /** @type {Violation[]} */
   const violations = [];
@@ -388,7 +526,7 @@ function scan(paths) {
 
   process.stdout.write(
     `scan-private-values — scanned ${scanned} file(s) against ${RULES.length} rules` +
-      `${secrets.length > 0 ? `, plus ${secrets.length} literal value(s) from the local overlay` : ''}\n`,
+      `${secrets.length > 0 ? `, plus ${secrets.length} literal value(s) from ${source}` : ''}\n`,
   );
 
   if (violations.length === 0) {
@@ -545,6 +683,47 @@ function selfTest() {
   );
 
   // ------------------------------------------------------------------
+  // Which overlay a run reads, asked without any run reading one.
+  // ------------------------------------------------------------------
+  //
+  // The default path is where a real overlay lives, so the one reading of it
+  // this self-test makes is of the resolver, which is a function of the command
+  // line and touches nothing. The path it answers is written out here rather
+  // than taken from the constant it is compared with.
+  const defaultOverlay = join(REPO_ROOT, 'infra', 'parameters.json');
+  const unnamed = resolveArguments(['infra/'], '/somewhere/else');
+  record(
+    'with no --overlay the overlay is the default path, and every argument is a path to scan',
+    !('why' in unnamed) && unnamed.overlay === defaultOverlay && !unnamed.named && unnamed.paths.join(',') === 'infra/',
+    JSON.stringify(unnamed),
+  );
+
+  const relativeOverlay = resolveArguments(['--overlay', 'held/overlay.json', 'infra/'], '/somewhere/else');
+  record(
+    'a relative --overlay is resolved against the working directory, and is not a path to scan',
+    !('why' in relativeOverlay) &&
+      relativeOverlay.overlay === join('/somewhere/else', 'held', 'overlay.json') &&
+      relativeOverlay.named &&
+      relativeOverlay.paths.join(',') === 'infra/',
+    JSON.stringify(relativeOverlay),
+  );
+
+  const absoluteOverlay = resolveArguments(['infra/', '--overlay', '/held/overlay.json'], '/somewhere/else');
+  record(
+    'an absolute --overlay is taken as it is written, wherever it sits on the command line',
+    !('why' in absoluteOverlay) && absoluteOverlay.overlay === '/held/overlay.json' && absoluteOverlay.paths.join(',') === 'infra/',
+    JSON.stringify(absoluteOverlay),
+  );
+
+  const noValue = resolveArguments(['--overlay'], '/somewhere/else');
+  const twice = resolveArguments(['--overlay', 'a.json', '--overlay', 'b.json'], '/somewhere/else');
+  record(
+    'an --overlay with no path, and a second --overlay, are each a run that cannot say what it looks for',
+    'why' in noValue && 'why' in twice,
+    `${JSON.stringify(noValue)} ${JSON.stringify(twice)}`,
+  );
+
+  // ------------------------------------------------------------------
   // The whole pipeline, not just the matching.
   // ------------------------------------------------------------------
   //
@@ -558,16 +737,34 @@ function selfTest() {
   // system temp space, because `git ls-files --others` is what resolves the file
   // set and it only lists paths git can see. The directory is removed afterwards
   // whatever happens.
+  //
+  // Every run names its overlay, and none of them reads the default one. The
+  // overlays are fixtures this self-test writes into the system temp space — an
+  // empty parameters array standing in for "no overlay", and the few a case is
+  // about — so what each run looks for is decided here, whatever does or does
+  // not exist at the default path, and nothing here creates, writes, moves or
+  // removes anything there.
   const fixtureName = `.scan-selftest-${process.pid}`;
   const fixtureRoot = join(REPO_ROOT, fixtureName);
+  const overlays = mkdtempSync(join(tmpdir(), 'viewer-scan-overlays-'));
+  const emptyOverlay = join(overlays, 'empty.json');
+  const seededOverlay = join(overlays, 'seeded.json');
+  const notJson = join(overlays, 'not-json.json');
+  const notAnArray = join(overlays, 'not-an-array.json');
+  const notParameters = join(overlays, 'not-parameters.json');
+  const nowhere = join(overlays, 'not-written.json');
+
+  // A value no file in this repository carries, assembled for the reason every
+  // seed here is.
+  const seededValue = `${'overlay'}-${'seeded'}-${'for'}-${'this'}-${'case'}`;
 
   /**
-   * @param {string} relativePath
+   * @param {readonly string[]} args
    * @returns {{status: number, output: string}}
    */
-  function runScanner(relativePath) {
+  function runScanner(args) {
     try {
-      const output = execFileSync(process.execPath, [fileURLToPath(import.meta.url), relativePath], {
+      const output = execFileSync(process.execPath, [fileURLToPath(import.meta.url), ...args], {
         cwd: REPO_ROOT,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -580,33 +777,93 @@ function selfTest() {
   }
 
   try {
+    writeFileSync(emptyOverlay, '[]\n');
+    writeFileSync(
+      seededOverlay,
+      `${JSON.stringify([
+        { ParameterKey: 'Environment', ParameterValue: 'a-flavour-under-test' },
+        { ParameterKey: 'SeededParameter', ParameterValue: seededValue },
+        { ParameterKey: 'EmptyParameter', ParameterValue: '' },
+      ])}\n`,
+    );
+    writeFileSync(notJson, '[ this is not JSON\n');
+    writeFileSync(notAnArray, '{ "ParameterKey": "Environment", "ParameterValue": "dev" }\n');
+    writeFileSync(notParameters, '[{ "ParameterKey": "Environment" }]\n');
+
     mkdirSync(join(fixtureRoot, 'dirty'), { recursive: true });
     mkdirSync(join(fixtureRoot, 'clean'), { recursive: true });
+    mkdirSync(join(fixtureRoot, 'named'), { recursive: true });
     writeFileSync(join(fixtureRoot, 'dirty', 'seeded.yaml'), `${seeded[0]?.line ?? ''}\n`);
     writeFileSync(join(fixtureRoot, 'clean', 'ordinary.md'), 'Nothing private lives in this file.\n');
+    writeFileSync(join(fixtureRoot, 'named', 'carries-it.md'), `The value ${seededValue} is written here.\n`);
 
-    const dirty = runScanner(`${fixtureName}/dirty`);
+    const dirty = runScanner(['--overlay', emptyOverlay, `${fixtureName}/dirty`]);
     record(
       'the real file set finds a seeded file and the run exits 1',
       dirty.status === 1 && dirty.output.includes('account-number'),
       `exit ${dirty.status}: ${dirty.output}`,
     );
 
-    const cleanRun = runScanner(`${fixtureName}/clean`);
+    const cleanRun = runScanner(['--overlay', emptyOverlay, `${fixtureName}/clean`]);
     record(
       'the real file set finds a clean file and the run exits 0',
       cleanRun.status === 0 && cleanRun.output.includes('PASS'),
       `exit ${cleanRun.status}: ${cleanRun.output}`,
     );
 
-    const empty = runScanner(`${fixtureName}/nothing-here`);
+    const empty = runScanner(['--overlay', emptyOverlay, `${fixtureName}/nothing-here`]);
     record(
       'a file set that resolves to zero files is a failure, not a pass',
       empty.status === 2 && empty.output.includes('proved nothing'),
       `exit ${empty.status}: ${empty.output}`,
     );
+
+    // An overlay at a named path is read, and its value is reported where a
+    // tracked-or-intended-public file carries it — with the value itself
+    // withheld from the report, as every overlay finding is.
+    const namedRun = runScanner(['--overlay', seededOverlay, `${fixtureName}/named`]);
+    record(
+      'an overlay at a named path is read, and its value is reported at the file that carries it',
+      namedRun.status === 1 &&
+        namedRun.output.includes(`${fixtureName}/named/carries-it.md:1  [overlay-value]`) &&
+        namedRun.output.includes('from the overlay named on the command line'),
+      `exit ${namedRun.status}: ${namedRun.output}`,
+    );
+    record(
+      'and the value it found is not echoed into the report',
+      !namedRun.output.includes(seededValue),
+      'the finding quoted the value it was refusing',
+    );
+
+    // Which values, never which files: the same paths under the named overlay
+    // and under the empty one are the same file set, read the same way.
+    const sameFiles = runScanner(['--overlay', seededOverlay, `${fixtureName}/clean`]);
+    record(
+      'a named overlay changes which values are looked for, and not which files are read',
+      sameFiles.status === 0 &&
+        /scanned 1 file\(s\)/.test(sameFiles.output) &&
+        /scanned 1 file\(s\)/.test(cleanRun.output),
+      `exit ${sameFiles.status}: ${sameFiles.output}`,
+    );
+
+    // A named overlay that is not there, or not a parameters array, is a run
+    // that cannot say what it is looking for — never a clean tree.
+    for (const [label, file] of /** @type {readonly [string, string][]} */ ([
+      ['a named overlay that does not exist', nowhere],
+      ['a named overlay that is not JSON', notJson],
+      ['a named overlay that is not an array', notAnArray],
+      ['a named overlay whose entry is not a ParameterKey and a ParameterValue', notParameters],
+    ])) {
+      const refusedRun = runScanner(['--overlay', file, `${fixtureName}/clean`]);
+      record(
+        `${label} cannot run, and exits 2`,
+        refusedRun.status === 2 && refusedRun.output.includes('cannot run') && !refusedRun.output.includes('PASS'),
+        `exit ${refusedRun.status}: ${refusedRun.output}`,
+      );
+    }
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
+    rmSync(overlays, { recursive: true, force: true });
   }
 
   if (failures === 0) {
@@ -625,7 +882,12 @@ function main() {
   if (args[0] === '--self-test') {
     return selfTest();
   }
-  return scan(args);
+  const asked = resolveArguments(args);
+  if ('why' in asked) {
+    process.stderr.write(`scan-private-values — cannot run: ${asked.why}\n`);
+    return 2;
+  }
+  return scan(asked.paths, asked);
 }
 
 process.exit(main());

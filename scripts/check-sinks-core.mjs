@@ -56,10 +56,11 @@
  *    stays documented rather than assumed away. Read this as a tripwire against
  *    accident and drift. The controls against an author who is actually trying
  *    are review, and CSP — whose resource half the page carries itself, as the
- *    policy written into `index.html`. One directive there names an origin
- *    outside this page and it is the only one: `connect-src` names `'self'` and
- *    the share API the origin table sends a page to, because a request the table
- *    decides on is a request the policy has to permit. The rest name `'self'` or
+ *    policy written into `index.html`. One directive there names origins
+ *    outside this page and they are the only ones: `connect-src` names `'self'`
+ *    and the two share APIs the origin table sends a page to, one for each hosted
+ *    flavour, because a request the table decides on is a request the policy has
+ *    to permit. The rest name `'self'` or
  *    `'none'` — and Trusted Types, which the origin adds along with the
  *    directives a page cannot carry.
  *
@@ -235,7 +236,8 @@ export const ORIGIN_TABLE_FILE = 'site/js/config.js';
  *
  * Named for the same reason and used the same way: the policy that says what may
  * leave this page is written in this file and nowhere else, so the rule that
- * admits the one destination that policy names admits it here and nowhere else.
+ * admits the two destinations that policy names admits them here and nowhere
+ * else.
  */
 export const ENTRY_DOCUMENT_FILE = 'site/index.html';
 
@@ -255,29 +257,41 @@ const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';
 /**
  * The share API a page served from that address is allowed to talk to.
  *
- * The one destination here that belongs in two served files rather than one, and
- * the one the admission below treats differently from its siblings. Both facts
- * have the same cause and it is written out beside each of them.
+ * One of the two destinations here that belong in two served files rather than
+ * one, and that the admission below treats differently from their siblings. Both
+ * facts have the same cause and it is written out beside each of them.
  */
 const HOSTED_DEVELOPMENT_API_ORIGIN = 'https://gl9wnq4nh4.execute-api.ap-southeast-2.amazonaws.com';
 
+/** The address a carer visits once this viewer is hosted for production. */
+const HOSTED_PRODUCTION_ORIGIN = 'https://patientscribe-share.au';
+
 /**
- * The five destinations this viewer names, and the file or files each belongs in.
+ * The share API a page served from that address is allowed to talk to.
  *
- * The rule below admits these five spellings; this is what says where each of
+ * The other of the two destinations that belong in two served files, for the
+ * same cause as its development sibling above.
+ */
+const HOSTED_PRODUCTION_API_ORIGIN = 'https://z5a7itwtg9.execute-api.ap-southeast-2.amazonaws.com';
+
+/**
+ * The seven destinations this viewer names, and the file or files each belongs in.
+ *
+ * The rule below admits these seven spellings; this is what says where each of
  * them may appear and how often. Two are attributes in the page, because a
- * destination written into the markup is a destination no code ever assigns. Two
- * more are the origin table's keys — the origin the development server runs on,
- * which is also its own destination, and the address the hosted development
+ * destination written into the markup is a destination no code ever assigns.
+ * Three more are the origin table's keys — the origin the development server
+ * runs on, which is also its own destination, the address the hosted
+ * development viewer is served from, and the address the hosted production
  * viewer is served from.
  *
- * The fifth is the share API, and it is the only one whose value is two files.
- * That is not a convenience: the origin table names it because the table decides
- * where a share code travels, and the entry document's policy names it because a
- * browser refuses a request the policy does not permit. Neither site can be
- * dropped in favour of the other, so the honest shape of this map is a list of
- * files per spelling rather than one file per spelling with an exception written
- * in prose.
+ * The last two are the share APIs, one for each hosted flavour, and they are the
+ * only ones whose value is two files. That is not a convenience: the origin
+ * table names each because the table decides where a share code travels, and the
+ * entry document's policy names each because a browser refuses a request the
+ * policy does not permit. Neither site can be dropped in favour of the other, so
+ * the honest shape of this map is a list of files per spelling rather than one
+ * file per spelling with an exception written in prose.
  *
  * Above the rules rather than beside `countAllowedUrls` below, because the rule
  * is built from it. The spellings a scan admits and the spellings a reader is
@@ -291,6 +305,8 @@ export const ALLOWED_URLS = Object.freeze({
   [LOOPBACK_ORIGIN]: Object.freeze([ORIGIN_TABLE_FILE]),
   [HOSTED_DEVELOPMENT_ORIGIN]: Object.freeze([ORIGIN_TABLE_FILE]),
   [HOSTED_DEVELOPMENT_API_ORIGIN]: Object.freeze([ENTRY_DOCUMENT_FILE, ORIGIN_TABLE_FILE]),
+  [HOSTED_PRODUCTION_ORIGIN]: Object.freeze([ORIGIN_TABLE_FILE]),
+  [HOSTED_PRODUCTION_API_ORIGIN]: Object.freeze([ENTRY_DOCUMENT_FILE, ORIGIN_TABLE_FILE]),
 });
 
 /**
@@ -343,18 +359,20 @@ const QUOTES = ["'", '"', '`'];
  * A spelling followed by some quote is a spelling that may still be inside a
  * string opened with a different one, and the characters after it would then be
  * part of the destination — so the quote in front and the quote behind have to
- * be the same character, which is why this is a dozen alternatives rather than
- * four: each of the four generally admitted destinations, once per quote it
+ * be the same character, which is why this is fifteen alternatives rather than
+ * five: each of the five generally admitted destinations, once per quote it
  * could be written between.
  *
- * Four rather than five, and the missing one is the whole of the paragraph
- * further down. Which four is read off the map rather than written out again, so
+ * Five rather than seven, and the missing two are the whole of the paragraph
+ * further down. Which five is read off the map rather than written out again, so
  * a destination added to that map joins this admission by being added there and
- * the one entry held out is held out by name.
+ * the two entries held out are held out by name.
  *
  * @type {readonly string[]}
  */
-const GENERALLY_ADMITTED = Object.keys(ALLOWED_URLS).filter((url) => url !== HOSTED_DEVELOPMENT_API_ORIGIN);
+const GENERALLY_ADMITTED = Object.keys(ALLOWED_URLS).filter(
+  (url) => url !== HOSTED_DEVELOPMENT_API_ORIGIN && url !== HOSTED_PRODUCTION_API_ORIGIN,
+);
 
 /** @see GENERALLY_ADMITTED @type {string} */
 const QUOTE_ADMITTED = QUOTES.flatMap((quote) =>
@@ -362,7 +380,7 @@ const QUOTE_ADMITTED = QUOTES.flatMap((quote) =>
 ).join('|');
 
 /**
- * The bytes the entry document's policy writes in front of the share API.
+ * The bytes the entry document's policy writes in front of the share APIs.
  *
  * Not a URL and not a spelling this scan is otherwise about: it is the source
  * list of one directive, up to and including the space that separates its second
@@ -392,9 +410,9 @@ const POLICY_ELEMENT_OPEN = '<meta http-equiv="Content-Security-Policy" content=
  * difference between reading a directive and reading a string that ends with
  * one. `connect-src` is a suffix of `xconnect-src`, which is not a directive any
  * browser has ever heard of and is therefore ignored entirely: a policy carrying
- * it names the share API nowhere, permits nothing, and a page relying on that
- * permission stops working — with a reading that matched the directive name as a
- * bare substring calling the file conformant. Measured: it did.
+ * it names neither share API anywhere, permits nothing, and a page relying on
+ * that permission stops working — with a reading that matched the directive name
+ * as a bare substring calling the file conformant. Measured: it did.
  *
  * Optional, because the directive can also be the first in the value, and that
  * is a policy this file has no opinion about the ordering of.
@@ -402,61 +420,75 @@ const POLICY_ELEMENT_OPEN = '<meta http-equiv="Content-Security-Policy" content=
 const POLICY_DIRECTIVE_BOUNDARY = '(?:[^"]*; )?';
 
 /**
- * The name the origin table's module declares that destination under.
+ * The names the origin table's module declares those two destinations under,
+ * each with the one spelling its declaration may carry.
  *
- * The identifier and not merely the shape of a declaration, for the same reason
- * `ORIGIN_TABLE_NAME` below is written out: `const anything = '<the share API>';`
+ * The identifiers and not merely the shape of a declaration, for the same reason
+ * `ORIGIN_TABLE_NAME` below is written out: `const anything = '<a share API>';`
  * is a shape any served module can write, and admitting the shape would admit
- * this spelling in any file that felt like declaring it. Admitting the one
- * declaration admits the one declaration. A rename is then a red scan rather
- * than a silent move, which is what a rename of this constant should be.
+ * these spellings in any file that felt like declaring them. Admitting the one
+ * declaration of each admits the one declaration of each. A rename is then a red
+ * scan rather than a silent move, which is what a rename of either constant
+ * should be — and so is a swap: each name admits its own spelling and nothing
+ * else, so either spelling declared under the other's name is refused.
+ *
+ * @type {Readonly<Record<string, string>>}
  */
-const API_ORIGIN_CONSTANT_NAME = 'HOSTED_DEVELOPMENT_API_ORIGIN';
+const API_ORIGIN_CONSTANT_NAMES = Object.freeze({
+  HOSTED_DEVELOPMENT_API_ORIGIN: HOSTED_DEVELOPMENT_API_ORIGIN,
+  HOSTED_PRODUCTION_API_ORIGIN: HOSTED_PRODUCTION_API_ORIGIN,
+});
 
 /**
- * The share API, admitted at two positions and refused everywhere else.
+ * The two share APIs, each admitted at two positions and refused everywhere
+ * else.
  *
  * Every other admitted spelling is admitted wherever it is written between a
  * matching pair of quotes, and that is right for them: each belongs in exactly
  * one served file, the count beside this scan says which, and inside that file
  * there is no second place the spelling could sit and mean something else.
  *
- * This one is different in both halves of that. It belongs in TWO files, and in
- * one of them — the entry document — it sits inside a policy attribute, between
- * a space and a semicolon, where there is no quote in front of it and none
- * behind. So the generic admission could never have admitted it there: written
- * into the policy, the spelling would have been refused as an external
- * destination the moment the policy named it.
+ * These two are different in both halves of that. Each belongs in TWO files,
+ * and in one of them — the entry document — each sits inside a policy
+ * attribute, after a space and before a space or a semicolon, where there is no
+ * quote in front of it and none behind. So the generic admission could never
+ * have admitted them there: written into the policy, the spellings would have
+ * been refused as external destinations the moment the policy named them.
  *
- * Widening the generic admission to reach it would have been the wrong repair,
+ * Widening the generic admission to reach them would have been the wrong repair,
  * and the reason is the other half. The entry document is markup, and markup
- * writes destinations between quotes all the time: with this spelling on the
- * generic admission, a link element carrying it as an attribute would be
+ * writes destinations between quotes all the time: with these spellings on the
+ * generic admission, a link element carrying one as an attribute would be
  * admitted, and it would be admitted in place of the policy occurrence rather
  * than as well as it — one occurrence in that file is what the count requires,
  * and the count cannot tell which one it found. The position would then be held
- * by nothing at all, and the served page would carry a link to the share API
- * where it used to carry the permission to reach it.
+ * by nothing at all, and the served page would carry a link to a share API where
+ * it used to carry the permission to reach it.
  *
- * So the admission for this entry is built per position rather than per quote,
- * and it is two positions:
+ * So the admission for these entries is built per position rather than per
+ * quote, and each has two positions:
  *
- * 1. The one named constant in the origin table's module — the spelling as the
- *    whole of a quoted string that the `const` named above is declared with and
- *    a semicolon ends. That is where the table's second entry gets its value
- *    from. Any other constant carrying the same spelling is refused, which is
- *    why the identifier is part of the pattern rather than the shape of a
+ * 1. Its own named constant in the origin table's module — the spelling as the
+ *    whole of a quoted string that its own `const`, named in the map above, is
+ *    declared with and a semicolon ends. That is where the table's second and
+ *    third entries get their values from. Any other constant carrying either
+ *    spelling is refused, the other one's included, which is why each
+ *    identifier is part of its own pattern rather than the shape of a
  *    declaration.
- * 2. The second source of the policy's `connect-src` directive in the entry
- *    document — the spelling between the bytes above and the semicolon that ends
- *    the directive.
+ * 2. Its own source of the policy's `connect-src` directive in the entry
+ *    document, and the two positions there are one ORDER: the development API
+ *    as the second source, followed by one space and the production API; the
+ *    production API as the third source, after the bytes above, the development
+ *    API and one space, and followed by the semicolon that ends the directive.
  *
  * The second is the inversion this file already explains, asked of a different
  * closing byte. A quoted string ends at its closing quote; a source in a policy
- * ends at whitespace or at the semicolon that ends the directive. A spelling
- * followed by one more character of a URL is therefore not admitted here, and
- * neither is a spelling followed by a space and a second source — which is what
- * naming a second destination in that directive would look like.
+ * ends at whitespace or at the semicolon that ends the directive. So each
+ * position is written out whole, with what may stand on either side of it: a
+ * spelling followed by one more character of a URL is not admitted here, the
+ * two in the other order are not admitted, either one without the other is not
+ * admitted, and neither is either followed by a further source — which is what
+ * naming a third destination in that directive would look like.
  *
  * "Two positions" is a claim about a position IN A FILE, and there are two ways
  * to fail it that a pattern alone fails at. Both were measured on a working
@@ -483,12 +515,12 @@ const API_ORIGIN_CONSTANT_NAME = 'HOSTED_DEVELOPMENT_API_ORIGIN';
  * So each admission is anchored from the START of its line: the origin table's
  * to a line that begins with the declaration and ends with its semicolon, the
  * entry document's to a line that begins with the policy element, with the
- * spelling inside the value of its `content` attribute — a span that cannot
+ * spellings inside the value of its `content` attribute — a span that cannot
  * reach past the quote that closes it, so no second attribute on that same line
- * can carry it either.
+ * can carry them either.
  *
  * What this still does NOT do is count. `countAllowedUrls` beside this scan is
- * what says the spelling appears exactly once in each file it belongs to, and
+ * what says each spelling appears exactly once in each file it belongs to, and
  * the two compose: this says where a line may put it, that says how many lines
  * do.
  *
@@ -534,27 +566,26 @@ const API_ORIGIN_CONSTANT_NAME = 'HOSTED_DEVELOPMENT_API_ORIGIN';
  * this refuses a second occurrence in either file, whatever encloses either of
  * them — or it REPLACES the real one, and then:
  *
- *   - In the entry document, the served page no longer carries the share API in
- *     an applied policy at all: a policy element inside a `<template>` is parsed
- *     and never applied, and one inside a comment is not parsed. The browser
- *     suite reads that three ways in both engines — the policy pinned in the
- *     element inventory, the byte comparison of the document through the end of
- *     the policy element, and the test that drives a real permitted request
- *     under it.
- *   - In the origin table's module, the declaration the table's second entry is
- *     built from is not running — and it is worth being exact about what
- *     notices, because the readings beside this one do not. They read raw text:
- *     a declaration inside a comment is counted like any other and its literal
- *     is resolved like any other, so a REPLACING commented declaration looks to
- *     them like a name declared once with a good value, and the pin is green.
- *     What refuses it is the module itself. The table refers to a name nothing
- *     declares, so the typecheck step ahead of this one reports the name as not
- *     found, and the self-test's runtime import — which asks the module what it
- *     answers rather than what it says — throws on evaluating it. Measured, both
- *     of them, on this file. A name declared twice IS caught by the readings
- *     beside this, which is the case where the live declaration stays and a
- *     second one is added; the replacing case belongs to the two layers named
- *     here.
+ *   - In the entry document, the served page no longer carries the share APIs
+ *     in an applied policy at all: a policy element inside a `<template>` is
+ *     parsed and never applied, and one inside a comment is not parsed. The
+ *     browser suite reads that three ways in both engines — the policy pinned in
+ *     the element inventory, the byte comparison of the document through the end
+ *     of the policy element, and the test that drives a real permitted request
+ *     to each of them under it.
+ *   - In the origin table's module, the declaration a table entry is built from
+ *     is not running — and it is worth being exact about what notices, because
+ *     the readings beside this one do not. They read raw text: a declaration
+ *     inside a comment is counted like any other and its literal is resolved
+ *     like any other, so a REPLACING commented declaration looks to them like a
+ *     name declared once with a good value, and the pin is green. What refuses
+ *     it is the module itself. The table refers to a name nothing declares, so
+ *     the typecheck step ahead of this one reports the name as not found, and
+ *     the self-test's runtime import — which asks the module what it answers
+ *     rather than what it says — throws on evaluating it. Measured, both of
+ *     them, on this file. A name declared twice IS caught by the readings beside
+ *     this, which is the case where the live declaration stays and a second one
+ *     is added; the replacing case belongs to the two layers named here.
  *
  * There is no arrangement of one enclosed line that is green everywhere; there
  * is an arrangement that is green HERE, and that is what this paragraph is
@@ -562,16 +593,29 @@ const API_ORIGIN_CONSTANT_NAME = 'HOSTED_DEVELOPMENT_API_ORIGIN';
  *
  * @type {string}
  */
-const ORIGIN_TABLE_ADMITTED = QUOTES.map(
-  (quote) =>
-    `(?<=^const\\s+${API_ORIGIN_CONSTANT_NAME}\\s*=\\s*${quote})` +
-    `${asPattern(HOSTED_DEVELOPMENT_API_ORIGIN)}(?=${quote};$)`,
-).join('|');
+const ORIGIN_TABLE_ADMITTED = Object.entries(API_ORIGIN_CONSTANT_NAMES)
+  .flatMap(([name, origin]) =>
+    QUOTES.map(
+      (quote) => `(?<=^const\\s+${name}\\s*=\\s*${quote})${asPattern(origin)}(?=${quote};$)`,
+    ),
+  )
+  .join('|');
+
+/**
+ * The policy's opening, anchored to the start of its line, up to and including
+ * the space in front of the directive's second source.
+ *
+ * @type {string}
+ */
+const POLICY_SOURCES_OPEN = `^\\s*${asPattern(POLICY_ELEMENT_OPEN)}${POLICY_DIRECTIVE_BOUNDARY}${asPattern(POLICY_CONNECT_SOURCE)}`;
 
 /** @see ORIGIN_TABLE_ADMITTED @type {string} */
-const ENTRY_DOCUMENT_ADMITTED =
-  `(?<=^\\s*${asPattern(POLICY_ELEMENT_OPEN)}${POLICY_DIRECTIVE_BOUNDARY}${asPattern(POLICY_CONNECT_SOURCE)})` +
-  `${asPattern(HOSTED_DEVELOPMENT_API_ORIGIN)}(?=;)`;
+const ENTRY_DOCUMENT_ADMITTED = [
+  `(?<=${POLICY_SOURCES_OPEN})` +
+    `${asPattern(HOSTED_DEVELOPMENT_API_ORIGIN)}(?= ${asPattern(HOSTED_PRODUCTION_API_ORIGIN)};)`,
+  `(?<=${POLICY_SOURCES_OPEN}${asPattern(HOSTED_DEVELOPMENT_API_ORIGIN)} )` +
+    `${asPattern(HOSTED_PRODUCTION_API_ORIGIN)}(?=;)`,
+].join('|');
 
 /**
  * The characters a URL parser deletes before it reads anything at all.
@@ -720,19 +764,19 @@ function externalUrl(admitted) {
 }
 
 /**
- * What every served file is read with: the four spellings admitted between
+ * What every served file is read with: the five spellings admitted between
  * matching quotes, and nothing else.
  *
- * The floor of the set, and the one an unrecognised file gets. Neither position
- * of the share API is in here, so a file this scan has not been told about is a
- * file that refuses the share API outright.
+ * The floor of the set, and the one an unrecognised file gets. No position of
+ * either share API is in here, so a file this scan has not been told about is a
+ * file that refuses both share APIs outright.
  */
 const EXTERNAL_URL = externalUrl(QUOTE_ADMITTED);
 
-/** The above, plus the one line of the origin table's module that may carry the share API. */
+/** The above, plus the two lines of the origin table's module that may carry a share API, each its own. */
 const EXTERNAL_URL_IN_ORIGIN_TABLE = externalUrl(`${QUOTE_ADMITTED}|${ORIGIN_TABLE_ADMITTED}`);
 
-/** The above, plus the one line of the entry document that may carry it. */
+/** The above, plus the one line of the entry document that may carry both, in order. */
 const EXTERNAL_URL_IN_ENTRY_DOCUMENT = externalUrl(`${QUOTE_ADMITTED}|${ENTRY_DOCUMENT_ADMITTED}`);
 
 /**
@@ -969,9 +1013,10 @@ export const RULES = [
     // at the top of this module applies to it exactly as much. `navigator['sendBeacon']`
     // is one of them, name match or no name match. The control that actually
     // holds at runtime is CSP `connect-src`, which the page carries itself as
-    // `'self'` and the one share API the committed table sends a page to — two
-    // entries in that table, and the second is the one whose key and value are
-    // different origins — and which a browser test drives a real refusal under.
+    // `'self'` and the two share APIs the committed table sends a page to — three
+    // entries in that table, and the second and third are the ones whose key and
+    // value are different origins — and which a browser test drives a real
+    // refusal under.
     // This is the same requirement asserted at the earliest point it can be
     // asserted, where it costs one line and catches the accident.
     pattern: /\bsendBeacon\b|\bXMLHttpRequest\b|\bWebSocket\b|\bEventSource\b/,
@@ -1156,10 +1201,12 @@ export const RULES = [
     // is the same requirement written somewhere else, and it is the rule below
     // this one, declared for the files it can be written in.
     //
-    // Five destinations are admitted, and they are the five this viewer has: the
-    // app on the store, the privacy policy, the origin the development server
+    // Seven destinations are admitted, and they are the seven this viewer has:
+    // the app on the store, the privacy policy, the origin the development server
     // and the browser suite run on, the address the hosted development viewer is
-    // served from, and the share API a page served from that address talks to.
+    // served from, the share API a page served from that address talks to, the
+    // address the hosted production viewer is served from, and the share API a
+    // page served from that one talks to.
     // The alternation that admits them is built from `ALLOWED_URLS` above rather
     // than written out a second time here, so the spellings this refuses to
     // refuse and the spellings the check beside it looks for cannot be two
@@ -1168,10 +1215,10 @@ export const RULES = [
     // suppression at a call site is a suppression.
     //
     // Each is admitted whole, and that is the difference between an allowance
-    // and a prefix. A destination that begins with one of the five and carries
+    // and a prefix. A destination that begins with one of the seven and carries
     // on is a different destination — a campaign token on the end of the store
     // link is the clearest case, and a campaign token is the one thing that link
-    // is built not to have. So four of them are admitted where they are written
+    // is built not to have. So five of them are admitted where they are written
     // between a matching pair of quotes and end at the closing one, and refused
     // wherever anything at all is written after them on the same line, which is
     // what `QUOTE_ADMITTED` above sets out and why it is written that way round.
@@ -1180,16 +1227,16 @@ export const RULES = [
     // destination no reading of either string can see, and that is a named miss
     // rather than something this covers.
     //
-    // The fifth is admitted per position instead of per quote, and the whole of
-    // why is beside `ORIGIN_TABLE_ADMITTED` and `ENTRY_DOCUMENT_ADMITTED` above,
-    // which are the two positions and the two declarations. In short: it belongs
-    // in two
-    // files rather than one, and in the entry document it sits inside a policy
-    // attribute where there is no quote on either side of it — so the generic
-    // admission could not reach it there, and widening the generic admission to
-    // reach it would have admitted the same spelling as an ordinary quoted
-    // attribute anywhere in that file, which is a link to the share API standing
-    // in for the permission to reach it with every count below still satisfied.
+    // The two share APIs are admitted per position instead of per quote, and the
+    // whole of why is beside `ORIGIN_TABLE_ADMITTED` and `ENTRY_DOCUMENT_ADMITTED`
+    // above, which are the positions and the declarations. In short: each belongs
+    // in two files rather than one, and in the entry document each sits inside a
+    // policy attribute where there is no quote on either side of it — so the
+    // generic admission could not reach them there, and widening the generic
+    // admission to reach them would have admitted the same spellings as ordinary
+    // quoted attributes anywhere in that file, which is a link to a share API
+    // standing in for the permission to reach it with every count below still
+    // satisfied.
     //
     // The scheme is part of the spelling for the same reason. The store link is
     // https and the development origin is http; swapping them names something
@@ -1255,19 +1302,21 @@ export const RULES = [
     // typed is written exactly that way, on three lines. The other two leaning
     // spellings cost nothing and are read.
     //
-    // The allowance is by spelling, and for four of the five it says nothing at
+    // The allowance is by spelling, and for five of the seven it says nothing at
     // all about which file the spelling appears in. What says that is
     // `countAllowedUrls` beside this scan, which reads the served tree and
-    // requires each of the five to appear exactly once in each file it belongs
-    // to and nowhere else — four of them in one file each, and the share API in
+    // requires each of the seven to appear exactly once in each file it belongs
+    // to and nowhere else — five of them in one file each, and each share API in
     // two. Neither half is the other's proof, and neither is proof that the page
     // fetches nothing else — a lexical scan reads lines, and the control that
     // holds at runtime is CSP at the origin.
     pattern: EXTERNAL_URL,
-    // And the two files that are read with one more admission than that. The
-    // share API belongs in both of them and nowhere else, and inside each it
-    // belongs on one line: `patternIn` is what makes "at two positions" a claim
-    // about positions rather than about bytes that could be typed anywhere.
+    // And the two files that are read with more admitted than that. The share
+    // APIs belong in both of them and nowhere else, and inside each they belong
+    // on named lines — one declaration each in the origin table's module, the
+    // policy's one line in the entry document: `patternIn` is what makes "at two
+    // positions" a claim about positions rather than about bytes that could be
+    // typed anywhere.
     // Every other served file — and every file in every fixture and scratch tree
     // this scan is ever pointed at — is read with `pattern` above, which admits
     // neither.
@@ -1496,8 +1545,8 @@ function exempt(rule, shown) {
  * The pattern a named file is read with.
  *
  * By whole path, like the exemption above, and for the same reason: a second
- * `config.js` somewhere else in the served tree is not the file whose one line
- * may carry the share API.
+ * `config.js` somewhere else in the served tree is not the file whose two
+ * declarations may carry the share APIs.
  *
  * Own properties only. The lookup key is a path, paths are arbitrary text, and a
  * property read that answered for an inherited name would hand back whatever
@@ -1591,7 +1640,8 @@ const ORIGIN_TABLE_NAME = 'API_ORIGINS';
  * origin arrived, because that is the moment they can come apart, and the second
  * origin has now arrived: the hosted development viewer is served from one
  * address and its share API answers at another, so the entry that going live
- * actually needed is an entry the old universal refuses.
+ * actually needed is an entry the old universal refuses — and the hosted
+ * production viewer's entry, which came after it, is the same shape.
  *
  * A universal that has to be relaxed to admit the change it was written for
  * stops being a control. So what replaced it is the table written out: these
@@ -1628,6 +1678,7 @@ const ORIGIN_TABLE_NAME = 'API_ORIGINS';
 export const ORIGIN_TABLE = Object.freeze({
   [LOOPBACK_ORIGIN]: LOOPBACK_ORIGIN,
   [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,
+  [HOSTED_PRODUCTION_ORIGIN]: HOSTED_PRODUCTION_API_ORIGIN,
 });
 
 /**
@@ -2045,7 +2096,7 @@ export function readApiOrigins(root = SHIPPED_TREE) {
   // viewer is served at.
   //
   // Skipped when nothing was read, because an unreadable table has already been
-  // reported as unreadable and reporting it a second time as two missing
+  // reported as unreadable and reporting it a second time as three missing
   // entries says nothing further.
   if (failures.length === 0) {
     const found = new Map(entries.map((one) => [one.key, one.destination]));

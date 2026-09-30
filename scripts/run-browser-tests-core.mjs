@@ -206,7 +206,7 @@ export const REQUIRED_TESTS = Object.freeze({
     // can see it, because that side reads response headers and never parses the
     // document. Skipped out, the suite would still clear every count here with
     // the reconciliation unmeasured in both engines.
-    'the policy permits the one origin it names, and still refuses one it does not',
+    'the policy permits every origin it names, and still refuses one it does not',
   ]),
   // The surface, which nothing else in this suite reads. The corpus asks what
   // the modules return and the smoke test asks what the page loaded; neither can

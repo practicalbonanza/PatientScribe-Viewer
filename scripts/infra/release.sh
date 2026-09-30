@@ -226,11 +226,16 @@ remediate_back() {
     echo
     echo "    git worktree add ../viewer-rollback \$(node $(q "$CORE") --manifest-field $(q "$RECORD_DIR/prior-manifest.json") commit)"
     echo '    cd ../viewer-rollback'
-    echo "    node $(q "$HERE/build-release.mjs") --out /absolute/path/to/rollback-build --release-id $(q "$PRIOR_RELEASE_ID")"
+    echo "    node $(q 'scripts/infra/build-release.mjs') --out /absolute/path/to/rollback-build --release-id $(q "$PRIOR_RELEASE_ID")"
     echo
-    printf '    VIEWER_RELEASE_ARMED=armed-by-the-gate %s %s --release-id %s --release-dir %s --operation %s --profile %s --overlay %s --retention-days %s --poll-seconds %s --timeout-seconds %s\n' \
-      "$(q "$SELF")" "$(q "$FLAVOUR")" "$(q "$PRIOR_RELEASE_ID")" "$(q "/absolute/path/to/rollback-build/$PRIOR_RELEASE_ID")" "$(q 'rollback')" \
+    printf '    VIEWER_RELEASE_ARMED=armed-by-the-gate sh %s %s --release-id %s --release-dir %s --operation %s --profile %s --overlay %s --retention-days %s --poll-seconds %s --timeout-seconds %s\n' \
+      "$(q 'scripts/infra/release.sh')" "$(q "$FLAVOUR")" "$(q "$PRIOR_RELEASE_ID")" "$(q "/absolute/path/to/rollback-build/$PRIOR_RELEASE_ID")" "$(q 'rollback')" \
       "$(q "$PROFILE")" "$(q "$OVERLAY")" "$(q "$RETENTION_DAYS")" "$(q "$POLL_SECONDS")" "$(q "$TIMEOUT_SECONDS")"
+    echo
+    echo '  The build and the driver are the worktree'"'"'s own, named from inside it: the check reads the'
+    echo '  origin table beside itself, so wherever this release'"'"'s table differs from the one being'
+    echo '  rolled back to, run from this checkout it would hold the rollback to this release'"'"'s table'
+    echo '  and fail it at [7], after the upload.'
     echo
     echo '  The rebuild is byte-identical to what was published — the build is a pure'
     echo '  function of the tree and the identifier — and the driver proves that for itself'

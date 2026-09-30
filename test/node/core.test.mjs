@@ -669,7 +669,7 @@ test('the browser path is invoked through the runner that fails closed, and both
       'the development server refuses anything outside the tree it serves',
       'the engine running this project is the engine the project names',
       'the page is served and its module graph runs without error',
-      'the policy permits the one origin it names, and still refuses one it does not',
+      'the policy permits every origin it names, and still refuses one it does not',
       'the policy the page carries is enforced against an origin that answers',
     ],
   );

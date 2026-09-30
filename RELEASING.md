@@ -89,7 +89,10 @@ identifier required to be the same string in the argument, in the manifest and i
 every roster manifest read strictly, target and retained alike, including the two static union defects a
 document alone can show — an `/assets/` path whose embedded digest disagrees with the digest its own
 manifest records, and two manifests recording different digests for one path; the origin table's digest
-bound; and provenance proved by reconstruction.
+bound; and provenance proved by reconstruction. The flavour's floor, where it has one, is read from the
+same tip and read fail-closed — a floor that cannot be listed, that is not one file, or that is not one
+published identifier at or below the target refuses — and it decides which of those roster manifests the
+check is handed as its union, never which of them are read.
 
 **[1] Identity, then the deployed truth.** `assert-account.sh` runs before any other call, so a wrong
 profile costs nothing. Then one `describe-stacks`, and every target is read from ITS outputs — the
@@ -161,8 +164,10 @@ epoch.** Every object of the target landed before the entry point moved, so a ro
 origin table and its union leg holds for target-caused refusals. The driver prints that rollback with
 this run's own facts filled in: the prior release's published manifest, already materialised into the
 run's record area; the worktree-and-rebuild step; and the exact invocation, every value single-quoted and
-every path absolute, because the rollback runs in a fresh worktree where this run's relative paths mean
-nothing.
+every path-valued option absolute, because the rollback runs in a fresh worktree where this run's relative
+paths mean nothing. The build and the driver it runs are the worktree's own, named by their paths inside
+it, because the check reads the origin table beside itself and this checkout's would judge the rollback
+against this release's table.
 
 The condition on that, because it decides whether this way out exists at all: the wire verdict derives
 the `connect-src` it expects from the target's own committed origin table and compares it against the
@@ -288,7 +293,10 @@ which is a thing to choose deliberately or not at all. The period defaults to 40
 
 **Append-only, and there is no delete tooling.** Nothing in this repository issues an S3 delete, removes a
 remote object, or retires a release. Release retirement is a later, gated round; until it exists, the
-retained roster is exactly the committed manifests.
+retained roster is exactly the committed manifests at or after the flavour's floor, where a flavour has one
+(`release-floors/<flavour>`, one identifier and one line feed, written once in the publish commit of that
+flavour's first release, never edited; prod requires one; a switch or rollback below a floor refuses before
+mutation).
 
 ## The drill
 
@@ -382,13 +390,14 @@ permission that grants nothing has no place in a least-privilege document.
    codes travel and it should read as one in a diff.
 
    That same commit also reconciles the entry document's **meta** policy, and the fold has been made: the
-   shipped meta now carries `connect-src 'self' <the dev API origin>`. A browser enforces the INTERSECTION of
+   shipped meta now carries `connect-src 'self' <the dev API origin> <the prod API origin>`, in that order,
+   and each flavour's response header narrows the page to its own API. A browser enforces the INTERSECTION of
    the meta policy and the response-header policy, so while the meta named only `'self'` the live
    cross-origin request would have been blocked however the header was written. The wire check cannot see any
    of this: it reads response headers and never parses the document. The browser legs can, and one of them
-   now measures the permission directly — the request is intercepted by the harness, so what is read is the
-   policy's decision and nothing leaves the machine. The edit sits inside the pinned safe prefix of the entry
-   document, so it carried its own re-pin round.
+   now measures the permission to each API directly — the requests are intercepted by the harness, so what is
+   read is the policy's decision and nothing leaves the machine. The edit sits inside the pinned safe prefix
+   of the entry document, so it carried its own re-pin round.
 
    **Which API origin that is, is not a matter of recollection.** It is the origin of the share stack's
    `ShareApiEndpoint` output — its scheme and host, with the stage left off, because the table holds
@@ -399,28 +408,33 @@ permission that grants nothing has no place in a least-privilege document.
    be the thing that says it is right.
 4. **Build at that commit.** `node scripts/infra/build-release.mjs`.
 5. **Publish at the release-publish gate: commit the manifest under `releases/` AND push it.** The drivers
-   read the public tip, so an unpushed manifest cannot switch.
+   read the public tip, so an unpushed manifest cannot switch. A flavour's first publish commits its floor,
+   `release-floors/<flavour>`, beside the manifest in the same commit.
 6. **The first switch.** Its prior-release capture records no-prior-release, and its printed remediation is
-   the kill path rather than a rollback, because there is nothing to roll back to.
+   the kill path rather than a rollback, because there is nothing to roll back to. On prod the first switch
+   is onto the floor its publish commit wrote, so its union is empty — the releases published before prod
+   existed were never on prod's origin, and without the floor the check would refuse their assets after the
+   entry point had moved. A prod switch with no floor refuses before anything is touched.
 
 ## Notes
 
 **Local conformance runs use `127.0.0.1:4173`.** That is the local-conformance entry of the committed
-table — the entry that answers for itself, alongside the hosted entry that sends a viewer to its share API —
-and `scripts/infra/selftest/serve-built-release.mjs` binds it and nothing else. It exists for the
+table — the one loopback entry, which answers for itself, alongside the two hosted entries, each of which
+sends a viewer to its flavour's share API — and `scripts/infra/selftest/serve-built-release.mjs` binds it
+and nothing else. It exists for the
 self-tests; nothing else invokes it, and no response it writes is evidence about the real distribution. Its
 conformance bar is the real check's verdict: if the check refuses it, the defect is in that server or in
 the layout it was handed, never in the frozen expectation.
 
-**Where the hosted entry sends a viewer, and what that value is.** The hosted entry's destination is the
-share API: the origin of the share stack's `ShareApiEndpoint` output, scheme and host, with the stage
-left off. The table is origins and only origins — every gate that reads it asserts that shape — so the
-stage the share API deploys under rides the request paths in `site/js/flow.js` instead, one stage in
-every environment because the share API names one. Two things follow, and both are worth having in one
-place. The value in the table is not a spelling anybody remembers: the release preflight reads the
-deployed share stack and refuses a switch whose table disagrees with it. And a change to that value is a
-change to the served response header as well as to the table, which makes it an epoch boundary — see
-*When a switch fails* for what a rollback can and cannot do across one.
+**Where the hosted entries send a viewer, and what those values are.** Each hosted entry's destination is
+its flavour's share API: the origin of that flavour's share stack's `ShareApiEndpoint` output, scheme and
+host, with the stage left off. The table is origins and only origins — every gate that reads it asserts
+that shape — so the stage the share API deploys under rides the request paths in `site/js/flow.js`
+instead, one stage in every environment because the share API names one. Two things follow, and both are
+worth having in one place. The values in the table are not spellings anybody remembers: the release
+preflight reads the flavour-bound share stack and refuses a switch whose table disagrees with it. And a
+change to either value is a change to that flavour's served response header as well as to the table, which
+makes it an epoch boundary — see *When a switch fails* for what a rollback can and cannot do across one.
 
 **One armed act at a time.** Both drivers take the same lock — an atomic directory beside the release
 directories — and refuse while it is held, naming the holder. The scope is the build area the release

@@ -23,7 +23,7 @@
  *
  * So the export is a surface for review to stand on, and the cost of it is worth
  * saying out loud: one more name leaves this module. It is a frozen object of
- * two entries, it is what the function already answers from, and nothing that
+ * three entries, it is what the function already answers from, and nothing that
  * imports it can change it.
  *
  * Exact match, and a table rather than a rule. A rule — a suffix, a pattern, a
@@ -39,15 +39,18 @@
  * `toString` and friends. Asking for own properties is what makes the table the
  * allowlist it is described as.
  *
- * Two keys are committed here. The first is the origin the development server
+ * Three keys are committed here. The first is the origin the development server
  * and the browser suite run on — that origin answers for itself, and the suite
  * intercepts both requests rather than making them. The second is the hosted
- * development viewer, and it is the first entry whose two halves are different
+ * development viewer, and it was the first entry whose two halves are different
  * origins: the page is served from one address and the share API answers at
  * another, so the key and the value are two spellings rather than one written
- * twice. Every other origin this viewer is ever served from is added here, one
- * key at a time, in a reviewed change: an entry in this table is a decision
- * about where share codes travel, and it should read as one in a diff.
+ * twice. The third is the hosted production viewer, and it has the same shape:
+ * its key is the address every production recipient holds, and its value is
+ * the production share stack's API. Every other origin this viewer is ever
+ * served from is added here, one key at a time, in a reviewed change: an entry
+ * in this table is a decision about where share codes travel, and it should
+ * read as one in a diff.
  */
 
 /**
@@ -65,15 +68,15 @@ const DEVELOPMENT_ORIGIN = 'http://127.0.0.1:4173';
  *
  * Written once and used as a key and nothing else, so this destination too
  * appears exactly once in the served tree. It is not a secret: it is the address
- * the link in a share goes to, which is to say the one thing about this viewer
- * every recipient of it already has.
+ * the link in a development share goes to, which is to say the one thing about
+ * this viewer every development recipient of it already has.
  */
 const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';
 
 /**
  * The share API a page served from that address is allowed to talk to.
  *
- * This is the one spelling in this module that is written in two places rather
+ * This is one of the two spellings in this module written in two places rather
  * than one, and the second place is the policy in the entry document. The two
  * exist for different reasons and neither stands in for the other: this table
  * decides where a share code travels, and the policy decides what the browser
@@ -83,13 +86,15 @@ const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';
  * that named an origin the policy does not carry would be a viewer that asks for
  * a request the browser then throws away.
  *
- * Where this value comes from: it is the origin of the share stack's
- * `ShareApiEndpoint` output — the scheme and host of it, with the stage left off,
- * because a table entry is an origin and the stage rides the request path in
- * `flow.js`. That provenance is not left to a comment. The release preflight
- * reads the deployed share stack and refuses a switch whose table disagrees with
- * it, so an origin written here that no share stack serves stops a release
- * before anything is uploaded.
+ * Where this value comes from: it is the origin of the development share
+ * stack's `ShareApiEndpoint` output — the scheme and host of it, with the stage
+ * left off, because a table entry is an origin and the stage rides the request
+ * path in `flow.js`. That provenance is not left to a comment. The release
+ * preflight reads the flavour-bound share stack — the development one on a
+ * development switch, the production one on a production switch — and refuses a
+ * switch whose table disagrees with it, so an entry whose destination its
+ * flavour's share stack does not serve stops that flavour's switch before
+ * anything is uploaded.
  *
  * Not a secret either, and less of one than the address above: it rides the
  * `connect-src` of the security policy on every response the hosting serves, so
@@ -98,13 +103,44 @@ const HOSTED_DEVELOPMENT_ORIGIN = 'https://d30xbcndd2uqpg.cloudfront.net';
 const HOSTED_DEVELOPMENT_API_ORIGIN = 'https://gl9wnq4nh4.execute-api.ap-southeast-2.amazonaws.com';
 
 /**
+ * The address a carer visits once this viewer is hosted for production.
+ *
+ * Written once and used as a key and nothing else, like the development address
+ * above, so this destination appears exactly once in the served tree as well.
+ * It is the address the link in a production share goes to, which is to say the
+ * one thing about this viewer every production recipient already has — no more
+ * a secret than the development address is.
+ */
+const HOSTED_PRODUCTION_ORIGIN = 'https://patientscribe-share.au';
+
+/**
+ * The share API a page served from the production address is allowed to talk to.
+ *
+ * The other of the two spellings written in two places, and for the same reason
+ * as the development one above: the second place is the policy in the entry
+ * document, which names it beside the development one because the policy has to
+ * permit what this table decides. Its provenance is the paragraph above, read
+ * for the other flavour: it is the origin of the production share stack's
+ * `ShareApiEndpoint` output, bound on every production switch by the same
+ * cross-stack read in the release preflight. And it is no more a secret than
+ * its sibling, for the same reason: it rides the `connect-src` of the security
+ * policy on every response the production hosting serves.
+ */
+const HOSTED_PRODUCTION_API_ORIGIN = 'https://z5a7itwtg9.execute-api.ap-southeast-2.amazonaws.com';
+
+/**
  * Origin served from, to origin talked to.
+ *
+ * In the order the entries were added, and the order is part of the table: the
+ * checks over this repository read the evaluated table entry by entry, in order,
+ * against a written-out copy of it.
  *
  * @type {Readonly<Record<string, string>>}
  */
 export const API_ORIGINS = Object.freeze({
   [DEVELOPMENT_ORIGIN]: DEVELOPMENT_ORIGIN,
   [HOSTED_DEVELOPMENT_ORIGIN]: HOSTED_DEVELOPMENT_API_ORIGIN,
+  [HOSTED_PRODUCTION_ORIGIN]: HOSTED_PRODUCTION_API_ORIGIN,
 });
 
 /**

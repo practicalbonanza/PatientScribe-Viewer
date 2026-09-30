@@ -250,6 +250,66 @@ git_context() {
 }
 
 # ---------------------------------------------------------------------------
+# The floor, from the public tip
+# ---------------------------------------------------------------------------
+#
+# A flavour's floor is one file OUTSIDE the releases tree — `release-floors/`
+# followed by the flavour's name — holding one release identifier and one line
+# feed: the first release that flavour's origin is expected to hold. It exists
+# because the union the check probes is read off the roster, and the roster
+# is every release ever published, while an origin holds only what was switched
+# onto it. A flavour stood up after other releases were published would refuse
+# its own first switch at the check, after the uploads, for assets it was never
+# meant to have; the floor is what says where its union starts. Outside the
+# releases tree because that tree is manifests and nothing else, and the reading
+# of it refuses anything that is not one — this driver's and every older one's.
+#
+# Read FAIL-CLOSED, and presence first. `git show` alone cannot tell a path that
+# is not there from a repository that could not be read — both are the same
+# nonzero exit — so the presence is asked of `git ls-tree` on the public tip,
+# which answers nothing, and succeeds, for a path that is not there: an empty
+# answer is an absent floor, a failed listing is a refusal, and anything listed
+# that is not one file is a refusal. Only then is the file itself produced,
+# into this run's record area, as bytes the deciding half reads — never as a
+# string the shell parses — and that has to succeed as well.
+#
+# Where no floor is listed, the union is the whole roster as it always was —
+# except on prod, where a switch without one refuses: prod was stood up after
+# other releases were published, so there is no prod union that is right
+# without a floor.
+#
+# Sets FLOOR_FILE to the materialised floor, or to nothing where there is none.
+read_floor() {
+  FLOOR_PATH="release-floors/${FLAVOUR}"
+  FLOOR_FILE=''
+
+  FLOOR_LISTING=$(git -C "$REPO" ls-tree "${PUBLIC_TIP}" -- "$FLOOR_PATH" 2>/dev/null) ||
+    refuse "the public tip's ${FLOOR_PATH} could not be listed, and a floor this cannot read is not a floor this can call absent"
+
+  if [ -z "$FLOOR_LISTING" ]; then
+    if [ "$FLAVOUR" = 'prod' ]; then
+      refuse "the public tip carries no ${FLOOR_PATH}, and a prod switch reads its union from prod's floor — the publish commit of prod's first release commits one beside its manifest"
+    fi
+    return 0
+  fi
+
+  case "$FLOOR_LISTING" in
+    *"$NEWLINE"*)
+      refuse "the public tip lists more than one entry at ${FLOOR_PATH}, and a floor is one file"
+      ;;
+  esac
+  FLOOR_TYPE=$(printf '%s\n' "$FLOOR_LISTING" | awk '{ print $2 }')
+  FLOOR_LISTED=$(printf '%s\n' "$FLOOR_LISTING" | cut -f2-)
+  if [ "$FLOOR_TYPE" != 'blob' ] || [ "$FLOOR_LISTED" != "$FLOOR_PATH" ]; then
+    refuse "the public tip carries ${FLOOR_PATH} as a ${FLOOR_TYPE}, and a floor is one file holding one release identifier"
+  fi
+
+  FLOOR_FILE="$RECORD_DIR/floor-${FLAVOUR}"
+  git -C "$REPO" show "${PUBLIC_TIP}:${FLOOR_PATH}" > "$FLOOR_FILE" 2>/dev/null ||
+    refuse "the public tip lists ${FLOOR_PATH} and could not produce it"
+}
+
+# ---------------------------------------------------------------------------
 # The target and the roster, from the public tip
 # ---------------------------------------------------------------------------
 #
@@ -271,6 +331,8 @@ materialise_roster() {
     refuse "the public tip does not publish ${RELEASE_ID} — the release-publish gate is what puts a manifest under releases/ and pushes it, and the driver switches to what that gate published, never to a file it was handed"
   fi
 
+  read_floor
+
   TARGET_MANIFEST="$RECORD_DIR/target-manifest.json"
   git -C "$REPO" show "${PUBLIC_TIP}:releases/${RELEASE_ID}.json" > "$TARGET_MANIFEST" ||
     refuse "the public tip lists ${RELEASE_ID}.json and could not produce it"
@@ -282,28 +344,44 @@ materialise_roster() {
   cmp -s "$SUPPLIED_MANIFEST" "$TARGET_MANIFEST" ||
     refuse "${SUPPLIED_MANIFEST} is not the manifest the public tip publishes for ${RELEASE_ID}"
 
-  # The union: every OTHER entry on the tip, materialised the same way. It may be
-  # empty — the first release's is — and the frozen command line permits zero
-  # --union arguments.
-  : > "$RECORD_DIR/union.txt"
+  # Every OTHER entry on the tip, materialised the same way — every one of them,
+  # floor or no floor, because every one of them is read strictly below.
+  : > "$RECORD_DIR/retained.txt"
   while IFS= read -r STEM; do
     [ -n "$STEM" ] || continue
     [ "$STEM" != "$RELEASE_ID" ] || continue
     RETAINED="$RECORD_DIR/retained-${STEM}.json"
     git -C "$REPO" show "${PUBLIC_TIP}:releases/${STEM}.json" > "$RETAINED" ||
       refuse "the public tip lists ${STEM}.json and could not produce it"
-    printf '%s\n' "$RETAINED" >> "$RECORD_DIR/union.txt"
+    printf '%s\n' "$RETAINED" >> "$RECORD_DIR/retained.txt"
   done < "$RECORD_DIR/roster.txt"
 
+  # The union: the retained entries the deciding half says the check is handed —
+  # all of them where the flavour has no floor, and those at or after the floor
+  # where it has one. A floor that is not one published identifier at or below
+  # the target refuses here, before any mutation. The union may be empty — the
+  # first release's is, and so is a flavour's first switch onto its floor — and
+  # the frozen command line permits zero --union arguments.
+  set -- "$RECORD_DIR/roster.txt" "$RELEASE_ID"
+  if [ -n "$FLOOR_FILE" ]; then
+    set -- "$@" --floor-file "$FLOOR_FILE"
+  fi
+  node "$CORE" --roster-union "$@" > "$RECORD_DIR/union-stems.txt" || exit 1
+  : > "$RECORD_DIR/union.txt"
+  while IFS= read -r STEM; do
+    [ -n "$STEM" ] || continue
+    printf '%s\n' "$RECORD_DIR/retained-${STEM}.json" >> "$RECORD_DIR/union.txt"
+  done < "$RECORD_DIR/union-stems.txt"
+
   # Every roster manifest, target and retained, read strictly — and the two
-  # static union defects with them. A malformed retained manifest refuses here,
-  # before any mutation, rather than after the entry point has moved, where no
-  # rollback cures it.
+  # static union defects with them — whether or not the floor puts it in the
+  # union. A malformed retained manifest refuses here, before any mutation,
+  # rather than after the entry point has moved, where no rollback cures it.
   set -- "$TARGET_MANIFEST"
   while IFS= read -r RETAINED; do
     [ -n "$RETAINED" ] || continue
     set -- "$@" "$RETAINED"
-  done < "$RECORD_DIR/union.txt"
+  done < "$RECORD_DIR/retained.txt"
   node "$CORE" --preflight-manifests "$@" || exit 1
 
   MANIFEST_RELEASE_ID=$(node "$CORE" --manifest-field "$TARGET_MANIFEST" release_id) || exit 1

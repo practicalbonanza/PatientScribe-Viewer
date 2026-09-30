@@ -12,12 +12,16 @@ repository sets.
 ## What is public here and what is not
 
 The template is public and every parameter *name* in it is public. Ten of those names carry values
-that are supplied from a private overlay at deploy time, and those values live in
+that are supplied from a private overlay at deploy time. The default overlay path is
 `infra/parameters.json`, which is git-ignored and which you create by copying
-`parameters.json.example`. Nine of the ten are private as well as overlay-supplied. The tenth,
-`ApiOrigin`, is supplied the same way and is not private: it rides the `connect-src` of the security
-policy on every response the distribution serves, and since the config fold it is also in the served
-bytes, in the committed origin table and in the entry document's own policy.
+`parameters.json.example`; the deploy and release drivers under `scripts/infra/` and the private-value
+scanner also take `--overlay <path>`, so an overlay need not live in the checkout at all. Eight of the
+ten are private as well as overlay-supplied. The other two are supplied the same way and are public
+by design. `ApiOrigin` rides the `connect-src` of the security policy on every response the
+distribution serves, and since the config fold it is also in the served bytes, in the committed
+origin table and in the entry document's own policy. `DomainName` is the alias the prod distribution
+answers on, which is the address in every prod share link, and the committed origin table carries it,
+with its scheme, as the key a prod page is answered for.
 
 | Parameter | What it is | Where the value lives |
 |---|---|---|
@@ -30,7 +34,7 @@ bytes, in the committed origin table and in the entry document's own policy.
 | `ApiOrigin` | The origin the policy's `connect-src` names | overlay — but public by design; see above |
 | `CertificateArn` | prod only: the supplied certificate | overlay |
 | `HostedZoneId` | prod only: the supplied hosted zone | overlay |
-| `DomainName` | prod only: the alias | overlay |
+| `DomainName` | prod only: the alias | overlay — but public by design; see above |
 
 Everything else the template takes — the environment flag, the alarm threshold, the access-log
 retention — is public-safe and carries a default in the template.
@@ -50,12 +54,16 @@ assembled from an empty default is a question better never asked.
 
 `scripts/infra/scan-private-values.mjs` is what holds this. It reads the tracked tree plus every
 intended-public untracked file and refuses account-number shapes, literal ARNs, AWS key shapes, and —
-if you have an overlay locally — any value out of it. That last rule has one expected exception since
-the config fold, and the scanner is deliberately not taught about it: with an overlay present the run
-reports the `ApiOrigin` value at every tracked file that carries it, and those reports are adjudicated
-at review rather than suppressed in code. Without an overlay — which is how it runs in CI — the run is
-clean. What catches a CHANGED `ApiOrigin` is not this scan but the release check, which derives its
-expected `connect-src` from the committed table and compares it against the live response header.
+if you have an overlay locally — any value out of it. The overlay it reads is the one at the default
+path unless `--overlay <path>` names another; the option changes which values are looked for and never
+which files are read, and a named overlay that is missing or is not a parameters array is a run that
+cannot run rather than a clean one. That last rule has two expected classes of report, and the scanner
+is deliberately taught about neither: with an overlay present the run reports the `ApiOrigin` value,
+and the `DomainName` value where the overlay carries one (a dev overlay's is empty and is never looked
+for), at every tracked file that carries it, and those reports are adjudicated at review rather than
+suppressed in code. Without an overlay — which is how it runs in CI — the run is clean. What catches a
+CHANGED `ApiOrigin` is not this scan but the release check, which derives its expected `connect-src`
+from the committed table and compares it against the live response header.
 
 On this directory and `scripts/infra/` the scanner also refuses e-mail addresses, which is where an
 ops contact would land if one ever did.
@@ -136,7 +144,9 @@ Not everything about this stack is provable from the stack.
 - **Edge propagation** — no template setting decides when a point of presence has caught up. That is
   an acceptance drill against the live origin.
 - **DNS and TLS identity** — the prod parameters' own gate. The certificate and the hosted zone are
-  supplied to this stack, never created by it, and no prod value exists in this repository.
+  supplied to this stack, never created by it, and no private prod value exists in this repository:
+  the alias name and the prod API origin are committed by design, as the key and the destination of
+  the prod entry in the origin table.
 - **The distribution actually having been built the way this file says** — `assert-distribution.sh`,
   at the deploy gate, reading the control plane back.
 

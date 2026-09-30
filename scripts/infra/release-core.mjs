@@ -21,6 +21,7 @@
  *   node scripts/infra/release-core.mjs --check-remote <url>
  *   node scripts/infra/release-core.mjs --manifest-field <manifest.json> <field>
  *   node scripts/infra/release-core.mjs --preflight-manifests <target.json> [<retained.json> ...]
+ *   node scripts/infra/release-core.mjs --roster-union <roster.txt> <target-id> [--floor-file <path>]
  *   node scripts/infra/release-core.mjs --plan <manifest.json>
  *   node scripts/infra/release-core.mjs --listing-keys <listing.json>
  *   node scripts/infra/release-core.mjs --inventory <keys.txt> <out.json>
@@ -663,6 +664,91 @@ export function rosterEntries(text) {
 }
 
 // ---------------------------------------------------------------------------
+// The union, and the floor under it
+// ---------------------------------------------------------------------------
+
+/**
+ * The retained releases a switch hands the check as its union: every release
+ * the public roster publishes other than the target — or, on a flavour with a
+ * floor, every one at or after the floor other than the target.
+ *
+ * WHY A FLOOR. The check probes every asset of every union manifest on the
+ * origin it is pointed at, and refuses one that is not there. An origin holds
+ * what was switched onto it, so the releases published before a flavour's
+ * first switch are on the roster and were never on that flavour's origin — and
+ * without a floor its first switch refuses at the check, after the uploads and
+ * the entry point have moved. A floor names the first release a flavour's
+ * origin is expected to hold, and the union is read from there.
+ *
+ * By identifier, in byte order. An identifier leads with the instant its
+ * release was built, written at a fixed width, so byte order is the order the
+ * releases were built in — and a floor is a line drawn in that order, never a
+ * reading of any manifest's contents.
+ *
+ * Read as bytes and refused as bytes: exactly one release identifier and one
+ * line feed, nothing before it and nothing after, so a floor a lenient reader
+ * would forgive — a second line, no line feed, a carriage return — is a floor
+ * this refuses. It must be ON the roster, because a floor naming a release
+ * nobody published is a union read from a point that does not exist. And it
+ * must not sort after the target: a switch below its flavour's floor is a
+ * switch to a release that flavour's origin is not expected to hold, and it
+ * refuses by design, a rollback included.
+ *
+ * The target is never in the union, floor or no floor.
+ *
+ * @param {readonly string[]} stems The roster, as `rosterEntries` reads it.
+ * @param {string} target
+ * @param {Buffer | null} floor The floor's raw bytes, or `null` where the flavour has none.
+ * @param {string} [floorName] How a refusal names the floor.
+ * @returns {{ stems: string[], refusals: string[] }}
+ */
+export function rosterUnion(stems, target, floor, floorName = 'the floor') {
+  /** @type {string[]} */
+  const refusals = [];
+  for (const stem of stems) {
+    if (parseReleaseId(stem) === null) {
+      refusals.push(`the roster carries ${JSON.stringify(stem)}, which is not a release identifier`);
+    }
+  }
+  if (parseReleaseId(target) === null) {
+    refusals.push(`${JSON.stringify(target)} is not a release identifier`);
+  } else if (!stems.includes(target)) {
+    refusals.push(`the roster does not publish the target ${target}`);
+  }
+
+  /** @type {string | null} */
+  let from = null;
+  if (floor !== null) {
+    // Decoded byte for character, so that what is compared below is the bytes
+    // and not whatever a decoder made of them.
+    const text = floor.toString('latin1');
+    const named = text.endsWith('\n') ? text.slice(0, -1) : null;
+    if (named === null || parseReleaseId(named) === null || !Buffer.from(`${named}\n`, 'latin1').equals(floor)) {
+      refusals.push(
+        `${floorName} is ${JSON.stringify(text)}, and a floor is exactly one release identifier and one line feed`,
+      );
+    } else if (!stems.includes(named)) {
+      refusals.push(`${floorName} names ${named}, which the roster does not publish — a floor is a published release`);
+    } else if (byBytes(named, target) > 0) {
+      refusals.push(
+        `${floorName} names ${named}, which sorts after the target ${target} — a switch below its flavour's floor is refused by design`,
+      );
+    } else {
+      from = named;
+    }
+  }
+
+  if (refusals.length > 0) {
+    return { stems: [], refusals };
+  }
+  const floorFrom = from;
+  return {
+    stems: stems.filter((stem) => stem !== target && (floorFrom === null || byBytes(stem, floorFrom) >= 0)),
+    refusals,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The public remote
 // ---------------------------------------------------------------------------
 
@@ -1010,6 +1096,45 @@ function run(argv) {
     return 0;
   }
 
+  if (mode === '--roster-union') {
+    const usage = 'usage: --roster-union <roster.txt> <target-id> [--floor-file <path>]';
+    const rosterFile = argv[1];
+    const target = argv[2];
+    if (rosterFile === undefined || target === undefined) {
+      cannotRun(usage);
+    }
+    /** @type {string | null} */
+    let floorFile = null;
+    if (argv.length > 3) {
+      const flag = argv[3];
+      const value = argv[4];
+      if (flag !== '--floor-file' || value === undefined || argv.length > 5) {
+        cannotRun(usage);
+      }
+      floorFile = value;
+    }
+    /** @type {Buffer | null} */
+    let floor = null;
+    if (floorFile !== null) {
+      try {
+        floor = readFileSync(floorFile);
+      } catch {
+        cannotRun(`cannot open ${floorFile}`);
+      }
+    }
+    const stems = readText(rosterFile)
+      .split('\n')
+      .filter((line) => line !== '');
+    const read = rosterUnion(stems, target, floor, floorFile === null ? 'the floor' : `the floor at ${floorFile}`);
+    if (read.refusals.length > 0) {
+      refuse(read.refusals);
+    }
+    for (const stem of read.stems) {
+      process.stdout.write(`${stem}\n`);
+    }
+    return 0;
+  }
+
   if (mode === '--plan') {
     const file = argv[1];
     if (file === undefined) {
@@ -1155,7 +1280,7 @@ function run(argv) {
   }
 
   return cannotRun(
-    'usage: --read-output | --read-output-raw | --read-json | --check-remote | --manifest-field | --preflight-manifests | --is-release-id | --roster-entries | --plan | --listing-keys | --inventory | --scan-release-comment | --sha256 | --run-id | --retain-until | --log-body | --self-test',
+    'usage: --read-output | --read-output-raw | --read-json | --check-remote | --manifest-field | --preflight-manifests | --is-release-id | --roster-entries | --roster-union | --plan | --listing-keys | --inventory | --scan-release-comment | --sha256 | --run-id | --retain-until | --log-body | --self-test',
   );
 }
 
@@ -1430,6 +1555,114 @@ function selfTest() {
     'a name that is nearly an identifier refuses',
     rosterEntries(`${blob}\t20260231T091500Z-a1b2c3d4e5f6.json\n`).refusals.length === 1,
     'nothing refused',
+  );
+
+  // The union, and the floor under it. Three published releases, oldest first,
+  // which is also byte order.
+  const oldest = '20260601T080000Z-0123456789ab';
+  const middle = '20260701T101500Z-f0e1d2c3b4a5';
+  const newest = '20260813T091500Z-a1b2c3d4e5f6';
+  const roster = [oldest, middle, newest];
+  /** @param {string} identifier */
+  const floorOf = (identifier) => Buffer.from(identifier, 'latin1');
+
+  // No floor: every published release but the target, in roster order — the
+  // union exactly as it was read before a floor existed, whichever release is
+  // the target.
+  record(
+    'with no floor the union is every published release but the target, as it always was',
+    roster.every((target) => {
+      const read = rosterUnion(roster, target, null);
+      return (
+        read.refusals.length === 0 && read.stems.join(',') === roster.filter((stem) => stem !== target).join(',')
+      );
+    }),
+    JSON.stringify(roster.map((target) => rosterUnion(roster, target, null))),
+  );
+
+  const partial = rosterUnion(roster, newest, floorOf(`${middle}\n`));
+  record(
+    'a floor in the middle of three leaves the one release at or after it that is not the target',
+    partial.refusals.length === 0 && partial.stems.join(',') === middle,
+    JSON.stringify(partial),
+  );
+
+  const atTarget = rosterUnion(roster, newest, floorOf(`${newest}\n`));
+  record(
+    'a floor that is the target leaves no union at all',
+    atTarget.refusals.length === 0 && atTarget.stems.length === 0,
+    JSON.stringify(atTarget),
+  );
+
+  // A rollback: the target is not the newest, and what was published after it
+  // is on the origin and in the union whatever the floor is, so long as the
+  // floor is at or below the target.
+  const rollback = rosterUnion(roster, middle, floorOf(`${oldest}\n`));
+  const rollbackAtFloor = rosterUnion(roster, middle, floorOf(`${middle}\n`));
+  record(
+    'a floor below a target that is not the newest keeps what was published after the target',
+    rollback.refusals.length === 0 &&
+      rollback.stems.join(',') === `${oldest},${newest}` &&
+      rollbackAtFloor.refusals.length === 0 &&
+      rollbackAtFloor.stems.join(',') === newest,
+    `${JSON.stringify(rollback)} ${JSON.stringify(rollbackAtFloor)}`,
+  );
+
+  for (const [label, bytes] of /** @type {readonly [string, string][]} */ ([
+    ['with no line feed', middle],
+    ['ending in a carriage return and a line feed', `${middle}\r\n`],
+    ['on two lines', `${middle}\n${middle}\n`],
+    ['followed by an empty line', `${middle}\n\n`],
+    ['with a space in front of it', ` ${middle}\n`],
+    ['that is empty', ''],
+    ['holding a name that is nearly an identifier', '20260231T091500Z-a1b2c3d4e5f6\n'],
+  ])) {
+    const read = rosterUnion(roster, newest, floorOf(bytes));
+    record(
+      `a floor ${label} refuses, naming what it holds`,
+      read.stems.length === 0 &&
+        read.refusals.length === 1 &&
+        read.refusals.some((line) => line.includes(JSON.stringify(bytes)) && line.includes('one line feed')),
+      JSON.stringify(read),
+    );
+  }
+
+  const unpublished = rosterUnion(roster, newest, floorOf('20260615T000000Z-abcdefabcdef\n'));
+  record(
+    'a floor naming a release the roster does not publish refuses, naming it',
+    unpublished.stems.length === 0 &&
+      unpublished.refusals.some((line) => line.includes('20260615T000000Z-abcdefabcdef') && line.includes('does not publish')),
+    JSON.stringify(unpublished),
+  );
+
+  const afterTarget = rosterUnion(roster, middle, floorOf(`${newest}\n`));
+  record(
+    'a floor that sorts after the target refuses, naming both',
+    afterTarget.stems.length === 0 &&
+      afterTarget.refusals.some((line) => line.includes(newest) && line.includes(middle) && line.includes('sorts after')),
+    JSON.stringify(afterTarget),
+  );
+
+  const offRoster = rosterUnion(roster, '20260901T000000Z-abcdefabcdef', null);
+  record(
+    'a target the roster does not publish refuses rather than reading a union for it',
+    offRoster.stems.length === 0 && offRoster.refusals.some((line) => line.includes('does not publish the target')),
+    JSON.stringify(offRoster),
+  );
+
+  const strayStem = rosterUnion([...roster, 'not-an-identifier'], newest, null);
+  record(
+    'a roster carrying a stem that is not a release identifier refuses, naming it',
+    strayStem.stems.length === 0 &&
+      strayStem.refusals.some((line) => line.includes('"not-an-identifier"') && line.includes('is not a release identifier')),
+    JSON.stringify(strayStem),
+  );
+
+  const strayTarget = rosterUnion(roster, 'not-an-identifier', null);
+  record(
+    'a target that is not a release identifier refuses rather than reading a union for it',
+    strayTarget.stems.length === 0 && strayTarget.refusals.some((line) => line.includes('is not a release identifier')),
+    JSON.stringify(strayTarget),
   );
 
   if (failures === 0) {

@@ -667,7 +667,9 @@ FAKE_AWS_STACKS="$WORK/stacks.json"
 # one nothing keeps in step.
 GATE_QUERY="$ROOT/scripts/infra/check-share-api-binding.mjs"
 
-# The hosted entry's key: the origin in the table that is not the loopback one.
+# The hosted entry's key: the first origin in the table that is not the loopback
+# one, which is the development viewer's — the table's written order is part of
+# the table, and the production entry comes after it.
 HOSTED_VIEWER_ORIGIN=$(node -e '
   const { pathToFileURL } = require("node:url");
   import(pathToFileURL(process.argv[1]).href).then((table) => {
@@ -1137,6 +1139,312 @@ HAPPY_TRANSCRIPT=$(cat "$HAPPY")
 HAPPY_OUTPUT=$(out happy)
 
 # ---------------------------------------------------------------------------
+# The floor: where a flavour's union starts
+# ---------------------------------------------------------------------------
+#
+# Every direction here is in a CLONE whose public tip is extended the way the
+# directions above extend one, so each clone's roster is three releases —
+# STRANGER, RETAINED and TARGET, oldest first — plus whatever the direction
+# adds. The floor is a file at release-floors/<flavour> on that tip.
+#
+# What is read is the check's own argv: which retained manifests the switch
+# handed the check as --union, by release. The refusals are read by their own
+# line, from the program that refused, and each is seen to cost no mutation and
+# to log nothing — every one of them is at [0].
+
+# The whole check argv of a run, out of the record area the run named.
+check_argv() {
+  ARGV_RECORD=$(sed -n 's/^release — record area //p' "$WORK/out-${1}.txt" | head -1)
+  cat "$ARGV_RECORD/release-check.txt.argv" 2>/dev/null || true
+}
+
+# The releases a run handed the check as --union, one per line, in argv order.
+unions_in() {
+  check_argv "$1" | tr ' ' '\n' | awk 'previous == "--union" { print } { previous = $0 }' |
+    sed 's|.*/retained-||; s|\.json$||'
+}
+
+# The deciding half's refusal line and the driver's, by program.
+core_refusal_line() {
+  grep '^release-core — refusing:' "$WORK/out-${1}.txt" | head -1
+}
+
+# A clone with a floor written into its tip. The second argument is the floor
+# file's exact bytes, as printf writes them; the third, which flavour's.
+clone_with_floor() {
+  clone_scratch "$1"
+  mkdir -p "$WORK/$1/release-floors"
+  printf "$2" > "$WORK/$1/release-floors/${3:-dev}"
+  publish_in_clone "$1" "a floor for ${3:-dev}"
+}
+
+switch_in_clone() {
+  run_in_clone "$1" "$2" dev --release-id "$TARGET_ID" --release-dir "$TARGET_DIR" --operation release \
+    --profile patientscribe-dev --overlay "$WORK/overlay.json" \
+    --retention-days 400 --poll-seconds 1 --timeout-seconds 5
+}
+
+expect_unions() {
+  GOT=$(unions_in "$2" | tr '\n' ' ')
+  if [ "$GOT" = "$3" ]; then
+    record ok "$1"
+  else
+    record fail "$1" "the check was handed --union for: '${GOT}', and the expectation is '${3}'"
+  fi
+}
+
+expect_line() {
+  if printf '%s\n' "$2" | grep -qF -- "$3"; then
+    record ok "$1"
+  else
+    record fail "$1" "expected '${3}' in: ${2}"
+  fi
+}
+
+# The baseline every floor direction is read against: the same clone with no
+# floor, whose union is the whole roster but the target.
+# Publishing the clone's HEAD as it is, which already carries the third release
+# as a local commit: nothing new to commit, only the tip to move.
+publish_head_in_clone() {
+  git -C "$WORK/$1" update-ref refs/remotes/origin/main "$(git -C "$WORK/$1" rev-parse HEAD)"
+}
+
+clone_scratch 'clone-floor-none'
+publish_head_in_clone 'clone-floor-none'
+switch_in_clone 'clone-floor-none' 'floor-none'
+expect_status 'with no floor the switch runs, as it always has' 0
+expect_unions 'with no floor every other published release is handed to the check' 'floor-none' \
+  "${STRANGER_ID} ${RETAINED_ID} "
+
+# The floor on the target: the union is nothing at all. This is a flavour's
+# first switch onto its floor.
+clone_with_floor 'clone-floor-target' "${TARGET_ID}\n"
+switch_in_clone 'clone-floor-target' 'floor-target'
+expect_status 'a floor on the target switches' 0
+expect_unions 'a floor on the target hands the check no --union at all' 'floor-target' ''
+if grep -q 'PASS — every predicate held' "$(sed -n 's/^release — record area //p' "$WORK/out-floor-target.txt" | head -1)/release-check.txt"; then
+  record ok 'and the real oracle passed with no union'
+else
+  record fail 'and the real oracle passed with no union' "$(out floor-target)"
+fi
+
+# The floor on RETAINED: RETAINED is at the floor and in; STRANGER is below it
+# and out. The partial filter.
+clone_with_floor 'clone-floor-retained' "${RETAINED_ID}\n"
+switch_in_clone 'clone-floor-retained' 'floor-retained'
+expect_status 'a floor on the retained release switches' 0
+expect_unions 'a floor on the retained release hands the check that release and not the one below it' \
+  'floor-retained' "${RETAINED_ID} "
+
+# The floor on STRANGER, the oldest: both are at or after it and both are in.
+clone_with_floor 'clone-floor-stranger' "${STRANGER_ID}\n"
+switch_in_clone 'clone-floor-stranger' 'floor-stranger'
+expect_status 'a floor on the oldest release switches' 0
+expect_unions 'a floor on the oldest release hands the check every release at or after it' 'floor-stranger' \
+  "${STRANGER_ID} ${RETAINED_ID} "
+
+# A floor on ANOTHER flavour is nothing to this one. release-floors/prod naming
+# the target, and no release-floors/dev, on a dev run: the union is exactly the
+# no-floor union. That is the state of a development switch once production has
+# its floor.
+clone_with_floor 'clone-floor-foreign' "${TARGET_ID}\n" 'prod'
+switch_in_clone 'clone-floor-foreign' 'floor-foreign'
+expect_status 'a floor for the other flavour changes nothing about this one' 0
+expect_unions 'the union under the other flavour'"'"'s floor is the union with no floor at all' 'floor-foreign' \
+  "$(unions_in 'floor-none' | tr '\n' ' ')"
+
+# The refusals, each at [0]: nothing put, nothing invalidated, nothing logged.
+clone_with_floor 'clone-floor-unpublished' '20251101T000000Z-abcdefabcdef\n'
+switch_in_clone 'clone-floor-unpublished' 'floor-unpublished'
+expect_status 'a floor naming a release the tip does not publish refuses' 1
+expect_line 'the refusal names the release the floor names, and says it is not published' \
+  "$(core_refusal_line 'floor-unpublished')" '20251101T000000Z-abcdefabcdef, which the roster does not publish'
+expect_no_mutation 'the unpublished-floor refusal costs no mutation'
+expect_nothing_logged 'the unpublished-floor refusal logs nothing'
+
+for SHAPE in two-lines no-line-feed carriage-return; do
+  case "$SHAPE" in
+    two-lines) BYTES="${TARGET_ID}\n${TARGET_ID}\n" ;;
+    no-line-feed) BYTES="${TARGET_ID}" ;;
+    carriage-return) BYTES="${TARGET_ID}\r\n" ;;
+  esac
+  clone_with_floor "clone-floor-${SHAPE}" "$BYTES"
+  switch_in_clone "clone-floor-${SHAPE}" "floor-${SHAPE}"
+  expect_status "a floor that is not one identifier and one line feed (${SHAPE}) refuses" 1
+  expect_line "the ${SHAPE} refusal says what a floor is" \
+    "$(core_refusal_line "floor-${SHAPE}")" 'and a floor is exactly one release identifier and one line feed'
+  expect_no_mutation "the ${SHAPE} refusal costs no mutation"
+  expect_nothing_logged "the ${SHAPE} refusal logs nothing"
+done
+
+# A floor that sorts after the target: a later release is built and published in
+# the clone, and the floor names it. A switch below its flavour's floor is
+# refused by design.
+LATER_ID="20260301T120000Z-${COMMIT12}"
+( cd "$SCRATCH" && node "$BUILD" --out "$WORK/build" --release-id "$LATER_ID" --commit "$SITE_COMMIT" ) \
+  > "$WORK/build-$LATER_ID.log" 2>&1
+clone_scratch 'clone-floor-after'
+cp "$WORK/build/$LATER_ID/manifest.json" "$WORK/clone-floor-after/releases/${LATER_ID}.json"
+mkdir -p "$WORK/clone-floor-after/release-floors"
+printf '%s\n' "$LATER_ID" > "$WORK/clone-floor-after/release-floors/dev"
+publish_in_clone 'clone-floor-after' 'a later release, and a floor on it'
+switch_in_clone 'clone-floor-after' 'floor-after'
+expect_status 'a floor that sorts after the target refuses' 1
+expect_line 'the refusal names the floor and the target, and says the floor is after it' \
+  "$(core_refusal_line 'floor-after')" "names ${LATER_ID}, which sorts after the target ${TARGET_ID}"
+expect_no_mutation 'the floor-after-target refusal costs no mutation'
+expect_nothing_logged 'the floor-after-target refusal logs nothing'
+
+# A floor path that is a tree rather than a file.
+clone_scratch 'clone-floor-tree'
+mkdir -p "$WORK/clone-floor-tree/release-floors/dev"
+printf '%s\n' "$TARGET_ID" > "$WORK/clone-floor-tree/release-floors/dev/inside"
+publish_in_clone 'clone-floor-tree' 'a floor that is a directory'
+switch_in_clone 'clone-floor-tree' 'floor-tree'
+expect_status 'a floor path that is a tree refuses' 1
+expect_line 'the refusal says the floor is not one file' \
+  "$(driver_refusal_line 'floor-tree')" 'carries release-floors/dev as a tree'
+expect_no_mutation 'the tree-floor refusal costs no mutation'
+expect_nothing_logged 'the tree-floor refusal logs nothing'
+
+# A floor on the target does not take a malformed manifest below it out of the
+# strict reading: the union is narrowed, and every published manifest is still
+# read before anything is touched.
+clone_scratch 'clone-floor-malformed'
+node -e '
+  const { readFileSync, writeFileSync } = require("node:fs");
+  const text = readFileSync(process.argv[1], "utf8");
+  writeFileSync(process.argv[2], text.replace("\"commit\"", "\"schema\": \"viewer-release-manifest/1\",\n  \"commit\""));
+' "$SCRATCH/releases/${RETAINED_ID}.json" "$WORK/clone-floor-malformed/releases/${RETAINED_ID}.json"
+mkdir -p "$WORK/clone-floor-malformed/release-floors"
+printf '%s\n' "$TARGET_ID" > "$WORK/clone-floor-malformed/release-floors/dev"
+publish_in_clone 'clone-floor-malformed' 'a floor on the target, over a malformed manifest below it'
+switch_in_clone 'clone-floor-malformed' 'floor-malformed'
+expect_status 'a malformed manifest below the floor still refuses at [0]' 1
+expect_line 'the refusal names the member stated twice' "$(core_refusal_line 'floor-malformed')" 'more than once'
+expect_no_mutation 'the below-floor malformed-manifest refusal costs no mutation'
+expect_nothing_logged 'the below-floor malformed-manifest refusal logs nothing'
+
+# A floor this cannot list is not a floor this may call absent. The tree the
+# floor sits in is taken out of the clone's object store, so the listing of the
+# public tip at release-floors/dev fails — where a reading that asked `git show`
+# alone could not have told that from a path that is not there.
+clone_with_floor 'clone-floor-unlistable' "${TARGET_ID}\n"
+FLOORS_TREE=$(git -C "$WORK/clone-floor-unlistable" rev-parse "refs/remotes/origin/main:release-floors")
+FLOORS_OBJECT="$WORK/clone-floor-unlistable/.git/objects/$(printf '%s' "$FLOORS_TREE" | cut -c1-2)/$(printf '%s' "$FLOORS_TREE" | cut -c3-)"
+if [ -f "$FLOORS_OBJECT" ]; then
+  rm -f "$FLOORS_OBJECT"
+  record ok 'the floor'"'"'s tree is taken out of the clone'"'"'s object store'
+else
+  record fail 'the floor'"'"'s tree is taken out of the clone'"'"'s object store' "no loose object at ${FLOORS_OBJECT}"
+fi
+switch_in_clone 'clone-floor-unlistable' 'floor-unlistable'
+expect_status 'a floor that cannot be listed refuses' 1
+expect_line 'the refusal says the floor could not be listed' \
+  "$(driver_refusal_line 'floor-unlistable')" 'release-floors/dev could not be listed'
+expect_no_mutation 'the unlistable-floor refusal costs no mutation'
+expect_nothing_logged 'the unlistable-floor refusal logs nothing'
+
+# A prod run with no floor refuses: there is no prod union that is right
+# without one. The prod flavour needs a prod overlay to get as far as reading
+# the tip, and nothing past the floor is reached.
+cat > "$WORK/overlay-prod.json" <<'JSON'
+[
+  { "ParameterKey": "Environment", "ParameterValue": "prod" },
+  { "ParameterKey": "AccountId", "ParameterValue": "account-under-test" }
+]
+JSON
+clone_scratch 'clone-floor-prod'
+publish_head_in_clone 'clone-floor-prod'
+run_in_clone 'clone-floor-prod' 'floor-prod-absent' prod --release-id "$TARGET_ID" --release-dir "$TARGET_DIR" \
+  --operation release --profile patientscribe-dev --overlay "$WORK/overlay-prod.json" \
+  --retention-days 400 --poll-seconds 1 --timeout-seconds 5
+expect_status 'a prod run with no floor refuses' 1
+expect_line 'the refusal says prod has no floor' \
+  "$(driver_refusal_line 'floor-prod-absent')" 'carries no release-floors/prod'
+expect_no_mutation 'the prod no-floor refusal costs no mutation'
+expect_nothing_logged 'the prod no-floor refusal logs nothing'
+
+# And the floor proved where it matters: at [7], against a real origin. An
+# older release is built from a CHANGED site — one more line in the stylesheet,
+# so one asset it names is an asset the target does not — in the clone, which
+# then takes the change back out so its site is the target's again, and
+# publishes it. That release is on the roster and was never on this origin.
+#
+# Without a floor, the switch to the target hands that release to the check as
+# --union, and the check asks the origin for its asset and is refused — after
+# the uploads, the entry point, and the invalidation, which is where a [7]
+# failure is by construction: logged, and printed as the way back.
+clone_scratch 'clone-floor-changed'
+CHANGED_CLONE="$WORK/clone-floor-changed"
+printf '\n/* one more line, before this release was built */\n' >> "$CHANGED_CLONE/site/css/viewer.css"
+git -C "$CHANGED_CLONE" add -A
+git -C "$CHANGED_CLONE" commit -q -m 'a change inside site/, before an older release'
+CHANGED_ID="20251101T070000Z-$(git -C "$CHANGED_CLONE" rev-parse HEAD | cut -c1-12)"
+( cd "$CHANGED_CLONE" && node "$BUILD" --out "$WORK/build-changed" --release-id "$CHANGED_ID" ) \
+  > "$WORK/build-changed.log" 2>&1
+git -C "$CHANGED_CLONE" show "${SITE_COMMIT}:site/css/viewer.css" > "$CHANGED_CLONE/site/css/viewer.css"
+git -C "$CHANGED_CLONE" add -A
+git -C "$CHANGED_CLONE" commit -q -m 'the change taken back out'
+cp "$WORK/build-changed/$CHANGED_ID/manifest.json" "$CHANGED_CLONE/releases/${CHANGED_ID}.json"
+publish_in_clone 'clone-floor-changed' 'publish the older release built from the changed site'
+
+# The asset only that release names, asked of its manifest and the target's.
+CHANGED_ASSET=$(node -e '
+  const { readFileSync } = require("node:fs");
+  const changed = JSON.parse(readFileSync(process.argv[1], "utf8")).objects;
+  const target = JSON.parse(readFileSync(process.argv[2], "utf8")).objects;
+  const only = Object.keys(changed).filter((path) => path.startsWith("/assets/") && !(path in target));
+  process.stdout.write(only.length === 1 ? only[0] : "");
+' "$WORK/build-changed/$CHANGED_ID/manifest.json" "$TARGET_DIR/manifest.json")
+if [ -n "$CHANGED_ASSET" ]; then
+  record ok "the older release names exactly one asset the target does not: ${CHANGED_ASSET}"
+else
+  record fail 'the older release names exactly one asset the target does not' 'it names none, or more than one'
+fi
+
+switch_in_clone 'clone-floor-changed' 'floor-changed-without'
+expect_status 'without a floor, a union release the origin never held fails the switch at [7]' 1
+CHANGED_TRANSCRIPT="$WORK/transcript-floor-changed-without.txt"
+if grep -q -- "--key ${LOG_PREFIX_VALUE}.*switch-started" "$CHANGED_TRANSCRIPT" &&
+  grep -q -- '^s3api put-object .*--key index.html ' "$CHANGED_TRANSCRIPT" &&
+  grep -q '^cloudfront create-invalidation' "$CHANGED_TRANSCRIPT" &&
+  grep -q -- "--key ${LOG_PREFIX_VALUE}.*switch-failed" "$CHANGED_TRANSCRIPT"; then
+  record ok 'it failed after switch-started, the puts and the invalidation, and logged switch-failed'
+else
+  record fail 'it failed after switch-started, the puts and the invalidation, and logged switch-failed' \
+    "$(transcript floor-changed-without)"
+fi
+if grep -q 'THE WAY OUT IS BACK' "$WORK/out-floor-changed-without.txt"; then
+  record ok 'and printed the way back'
+else
+  record fail 'and printed the way back' "$(out floor-changed-without)"
+fi
+CHANGED_RECORD=$(sed -n 's/^release — record area //p' "$WORK/out-floor-changed-without.txt" | head -1)
+if [ -n "$CHANGED_ASSET" ] &&
+  grep -qF -- "origin-inventory-missing-object — ${CHANGED_ASSET}" "$CHANGED_RECORD/release-check.txt"; then
+  record ok 'the check named the older release'"'"'s asset as missing from the origin'
+else
+  record fail 'the check named the older release'"'"'s asset as missing from the origin' \
+    "$(cat "$CHANGED_RECORD/release-check.txt" 2>/dev/null || echo 'no release-check.txt')"
+fi
+
+# With the floor on the target, published in the same clone, the same switch
+# hands the check no union and the check passes.
+mkdir -p "$CHANGED_CLONE/release-floors"
+printf '%s\n' "$TARGET_ID" > "$CHANGED_CLONE/release-floors/dev"
+publish_in_clone 'clone-floor-changed' 'a floor on the target'
+switch_in_clone 'clone-floor-changed' 'floor-changed-with'
+expect_status 'with the floor on the target, the same switch passes' 0
+expect_unions 'and hands the check no --union at all' 'floor-changed-with' ''
+if grep -q 'PASS — every predicate held' \
+  "$(sed -n 's/^release — record area //p' "$WORK/out-floor-changed-with.txt" | head -1)/release-check.txt"; then
+  record ok 'and the real oracle passed'
+else
+  record fail 'and the real oracle passed' "$(out floor-changed-with)"
+fi
+
+# ---------------------------------------------------------------------------
 # The no-prior-release direction
 # ---------------------------------------------------------------------------
 FAKE_AWS_LISTING="$WORK/listing-no-entry.json"
@@ -1220,6 +1528,25 @@ if grep -q "$RETAINED_ID" "$WORK/out-invalidation-times-out.txt"; then
   record ok 'the rollback print names the prior release it was captured with'
 else
   record fail 'the rollback print names the prior release it was captured with' "$(out invalidation-times-out)"
+fi
+# The rollback runs from inside the worktree, and it has to run the worktree's
+# OWN build and driver: the check reads the origin table beside itself, so the
+# driver of this checkout would hold the rollback to this release's table. Read
+# as the two printed lines, by their paths inside the worktree — and as the
+# absence of this checkout's own paths from both.
+if grep -qF "    node 'scripts/infra/build-release.mjs' --out " "$WORK/out-invalidation-times-out.txt" &&
+  grep -qF "    VIEWER_RELEASE_ARMED=armed-by-the-gate sh 'scripts/infra/release.sh' 'dev' --release-id '${RETAINED_ID}' " \
+    "$WORK/out-invalidation-times-out.txt"; then
+  record ok 'the rollback print runs the worktree'"'"'s own build and driver, by their paths inside it'
+else
+  record fail 'the rollback print runs the worktree'"'"'s own build and driver, by their paths inside it' \
+    "$(out invalidation-times-out)"
+fi
+if grep -F -- "--operation 'rollback'" "$WORK/out-invalidation-times-out.txt" | grep -qF "$SCRIPT" ||
+  grep -F -- '--out /absolute/path/to/rollback-build' "$WORK/out-invalidation-times-out.txt" | grep -qF "$BUILD"; then
+  record fail 'and neither rollback line names this checkout'"'"'s own driver or build' "$(out invalidation-times-out)"
+else
+  record ok 'and neither rollback line names this checkout'"'"'s own driver or build'
 fi
 
 # ---------------------------------------------------------------------------
