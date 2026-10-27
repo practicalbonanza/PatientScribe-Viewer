@@ -1,8 +1,10 @@
 # The viewer's hosting
 
 `viewer-stack.yaml` is the whole of it: a private S3 bucket, a CloudFront distribution reading it
-through an origin access control, the two response-headers policies the hardening list requires, two
-log buckets with opposite jobs, and one alarm. One template, two flavours, selected by the
+through an origin access control, the two response-headers policies the hardening list requires, a
+release-log bucket, and one alarm. Access logging is off in this template, so a distribution
+deployed from it writes no access logs; the access-log bucket keeps the logs from while logging was
+on until they expire, and a later change removes it. One template, two flavours, selected by the
 `Environment` parameter.
 
 Nothing in this directory deploys anything. The scripts under `scripts/infra/` write out the deploy
@@ -36,8 +38,9 @@ with its scheme, as the key a prod page is answered for.
 | `HostedZoneId` | prod only: the supplied hosted zone | overlay |
 | `DomainName` | prod only: the alias | overlay — but public by design; see above |
 
-Everything else the template takes — the environment flag, the alarm threshold, the access-log
-retention — is public-safe and carries a default in the template.
+Everything else the template takes is public-safe and carries a default in the template: the
+environment flag, the alarm threshold, and the retention that expires what is left in the access-log
+bucket.
 
 The overlay is a CloudFormation parameters file, in exactly the shape the CLI reads:
 
