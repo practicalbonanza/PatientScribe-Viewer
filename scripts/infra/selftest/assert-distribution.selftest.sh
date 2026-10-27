@@ -37,8 +37,12 @@ record() {
 }
 
 echo 'the assertions themselves:'
+# Written to a file and indented afterwards, not piped: a pipeline's status is
+# its last command's, so the core's exit would be the indenting sed's and a
+# failing core self-test would be read here as a passing one.
 STATUS=0
-node "$CORE" --self-test | sed 's/^/  /' || STATUS=$?
+node "$CORE" --self-test > "$WORK/core.txt" 2>&1 || STATUS=$?
+sed 's/^/  /' "$WORK/core.txt"
 if [ "$STATUS" -eq 0 ]; then
   record ok 'every failing direction of the assertions is exercised'
 else
@@ -66,6 +70,9 @@ cat > "$WORK/stacks.json" <<'JSON'
 }
 JSON
 
+# The logging object is there, switched off, because that is what the control
+# plane answers with for a distribution that writes no access logs.
+#
 # The error responses carry `""` for the page and the code, because that is what
 # the control plane answers with for the fields this template never sets. The
 # fake answers as the service answers: a document that omitted them would be a
@@ -82,6 +89,7 @@ cat > "$WORK/distribution.json" <<'JSON'
       "Quantity": 1,
       "Items": [{ "PathPattern": "/assets/*", "TargetOriginId": "viewer-origin", "ResponseHeadersPolicyId": "policy-assets" }]
     },
+    "Logging": { "Enabled": false, "IncludeCookies": false, "Bucket": "", "Prefix": "" },
     "CustomErrorResponses": {
       "Quantity": 11,
       "Items": [

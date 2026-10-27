@@ -12,10 +12,11 @@ playwright/.cache/
 *.pem
 
 # The default overlay path. Parameter names are public and live in the
-# template; their values are not — with two exceptions, ApiOrigin and
-# DomainName, which are supplied from here and are public by design — and this
-# is where they land. Copy infra/parameters.json.example, fill it in, and it
-# stays here.
+# template; the values of the boundary parameters are not, with two
+# exceptions, ApiOrigin and DomainName, which are public by design. A
+# development overlay usually lives here; another can be named with
+# --overlay. Copy infra/parameters.json.example, fill it in, and it stays
+# here.
 infra/parameters.json
 
 release-build/

@@ -1239,13 +1239,14 @@ const traffic = new WeakMap();
  * itself; this is a reading of the requests the surfaces below actually drive,
  * which is what closes the request the surfaces below actually make. The control
  * that holds at runtime for every request nothing here drives is CSP
- * `connect-src`, which the page carries itself as `'self'` and the one share API
- * the committed origin table sends a page to — that table remaining the sole
+ * `connect-src`, which the page carries itself as `'self'` and the share APIs
+ * the committed origin table sends a page to, one per hosted flavour, each
+ * flavour's header narrowing a page to its own — that table remaining the sole
  * decider of what is ever asked for, since a policy permits a request and does
  * not make one — and which `smoke.spec.js` drives both a refusal and a
- * permission under. The directives a page cannot carry —
- * who may frame it, where violations are reported — still arrive with the deploy
- * configuration and are not in this repository.
+ * permission under. The directive a page cannot carry — who may frame it —
+ * arrives with the hosting's response headers, in `infra/viewer-stack.yaml`; no
+ * reporting directive is set.
  */
 test.beforeEach(async ({ page, baseURL }) => {
   expect(baseURL, 'the harness ran with no base URL, so there is no origin to hold requests to').toBeTruthy();

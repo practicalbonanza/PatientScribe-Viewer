@@ -1365,16 +1365,61 @@ expect_line 'the refusal says prod has no floor' \
 expect_no_mutation 'the prod no-floor refusal costs no mutation'
 expect_nothing_logged 'the prod no-floor refusal logs nothing'
 
-# And the floor proved where it matters: at [7], against a real origin. An
+# And prod past its floor, which is the only floor that exists in practice. A
+# prod run resolves its origin from the overlay's DomainName rather than from
+# the stack, so a prod overlay naming the loopback takes the run to the same
+# local origin over http; the prod share stack is answered by the fake exactly as
+# the dev one is. The union is read from prod's floor and nothing else: on the
+# target, no union at all and the real oracle passes; on RETAINED, exactly that
+# release, and not the one below it.
+cat > "$WORK/overlay-prod-loopback.json" <<JSON
+[
+  { "ParameterKey": "Environment", "ParameterValue": "prod" },
+  { "ParameterKey": "AccountId", "ParameterValue": "account-under-test" },
+  { "ParameterKey": "DomainName", "ParameterValue": "${LOOPBACK}" }
+]
+JSON
+
+switch_prod_in_clone() {
+  run_in_clone "$1" "$2" prod --release-id "$TARGET_ID" --release-dir "$TARGET_DIR" --operation release \
+    --profile patientscribe-dev --overlay "$WORK/overlay-prod-loopback.json" \
+    --retention-days 400 --poll-seconds 1 --timeout-seconds 5
+}
+
+clone_with_floor 'clone-floor-prod-target' "${TARGET_ID}\n" 'prod'
+switch_prod_in_clone 'clone-floor-prod-target' 'floor-prod-target'
+expect_status 'a prod switch with its floor on the target switches' 0
+expect_unions 'and hands the check no --union at all' 'floor-prod-target' ''
+if grep -q 'PASS — every predicate held' \
+  "$(sed -n 's/^release — record area //p' "$WORK/out-floor-prod-target.txt" | head -1)/release-check.txt"; then
+  record ok 'and the real oracle passed on prod with no union'
+else
+  record fail 'and the real oracle passed on prod with no union' "$(out floor-prod-target)"
+fi
+if grep -q -- '--stack-name patientscribe-share --output json --region ap-southeast-2 ' \
+  "$WORK/transcript-floor-prod-target.txt"; then
+  record ok 'and the prod run read the prod share stack'
+else
+  record fail 'and the prod run read the prod share stack' "$(transcript floor-prod-target)"
+fi
+
+clone_with_floor 'clone-floor-prod-retained' "${RETAINED_ID}\n" 'prod'
+switch_prod_in_clone 'clone-floor-prod-retained' 'floor-prod-retained'
+expect_status 'a prod switch with its floor on the retained release switches' 0
+expect_unions 'and hands the check that release and not the one below it' 'floor-prod-retained' "${RETAINED_ID} "
+
+# And the floor proved where it matters: on a release the origin never held. An
 # older release is built from a CHANGED site — one more line in the stylesheet,
 # so one asset it names is an asset the target does not — in the clone, which
 # then takes the change back out so its site is the target's again, and
 # publishes it. That release is on the roster and was never on this origin.
 #
-# Without a floor, the switch to the target hands that release to the check as
-# --union, and the check asks the origin for its asset and is refused — after
-# the uploads, the entry point, and the invalidation, which is where a [7]
-# failure is by construction: logged, and printed as the way back.
+# Without a floor, that release is in the switch's union, and the check at [7]
+# would ask the origin for its asset and be refused, after the uploads, the
+# entry point and the invalidation. So the switch refuses at [2] instead, from
+# the listing it has just taken: the asset is neither on the origin nor among
+# the target's uploads. Nothing is put, nothing is invalidated, nothing is
+# logged, and the refusal names the asset.
 clone_scratch 'clone-floor-changed'
 CHANGED_CLONE="$WORK/clone-floor-changed"
 printf '\n/* one more line, before this release was built */\n' >> "$CHANGED_CLONE/site/css/viewer.css"
@@ -1404,8 +1449,26 @@ else
 fi
 
 switch_in_clone 'clone-floor-changed' 'floor-changed-without'
-expect_status 'without a floor, a union release the origin never held fails the switch at [7]' 1
-CHANGED_TRANSCRIPT="$WORK/transcript-floor-changed-without.txt"
+expect_status 'without a floor, a union release the origin never held refuses the switch at [2]' 1
+expect_no_mutation 'the [2] refusal is made BEFORE mutation: zero uploads, zero invalidations'
+expect_nothing_logged 'the [2] refusal logs nothing'
+expect_line 'the refusal names the older release'"'"'s asset, as a key, and the release that names it' \
+  "$(core_refusal_line 'floor-changed-without')" "the origin holds no ${CHANGED_ASSET#/}, which the union release ${CHANGED_ID} names"
+expect_line 'and the driver says it is the refusal [7] would have made after mutation' \
+  "$(driver_refusal_line 'floor-changed-without')" 'this is the same refusal [7] would make after the uploads'
+
+# Where that asset IS listed, [2] has nothing to refuse, and the union leg of
+# the check is what is left to catch it: here the listing names the asset and
+# the origin does not serve it, so the switch is handed that release as --union,
+# and the check asks the origin for its asset and is refused, after the uploads,
+# the entry point and the invalidation, which is where a [7] failure is by
+# construction: logged, and printed as the way back.
+listing_from_layout "$TARGET_DIR/layout" "$WORK/listing-changed-listed.json" "${CHANGED_ASSET#/}"
+FAKE_AWS_LISTING="$WORK/listing-changed-listed.json"
+switch_in_clone 'clone-floor-changed' 'floor-changed-listed'
+FAKE_AWS_LISTING="$WORK/listing.json"
+expect_status 'a union asset the origin lists and does not serve fails the switch at [7]' 1
+CHANGED_TRANSCRIPT="$WORK/transcript-floor-changed-listed.txt"
 if grep -q -- "--key ${LOG_PREFIX_VALUE}.*switch-started" "$CHANGED_TRANSCRIPT" &&
   grep -q -- '^s3api put-object .*--key index.html ' "$CHANGED_TRANSCRIPT" &&
   grep -q '^cloudfront create-invalidation' "$CHANGED_TRANSCRIPT" &&
@@ -1413,19 +1476,21 @@ if grep -q -- "--key ${LOG_PREFIX_VALUE}.*switch-started" "$CHANGED_TRANSCRIPT" 
   record ok 'it failed after switch-started, the puts and the invalidation, and logged switch-failed'
 else
   record fail 'it failed after switch-started, the puts and the invalidation, and logged switch-failed' \
-    "$(transcript floor-changed-without)"
+    "$(transcript floor-changed-listed)"
 fi
-if grep -q 'THE WAY OUT IS BACK' "$WORK/out-floor-changed-without.txt"; then
+if grep -q 'THE WAY OUT IS BACK' "$WORK/out-floor-changed-listed.txt"; then
   record ok 'and printed the way back'
 else
-  record fail 'and printed the way back' "$(out floor-changed-without)"
+  record fail 'and printed the way back' "$(out floor-changed-listed)"
 fi
-CHANGED_RECORD=$(sed -n 's/^release — record area //p' "$WORK/out-floor-changed-without.txt" | head -1)
+expect_unions 'the release the origin never held was handed to the check as --union' 'floor-changed-listed' \
+  "${CHANGED_ID} ${STRANGER_ID} ${RETAINED_ID} "
+CHANGED_RECORD=$(sed -n 's/^release — record area //p' "$WORK/out-floor-changed-listed.txt" | head -1)
 if [ -n "$CHANGED_ASSET" ] &&
-  grep -qF -- "origin-inventory-missing-object — ${CHANGED_ASSET}" "$CHANGED_RECORD/release-check.txt"; then
-  record ok 'the check named the older release'"'"'s asset as missing from the origin'
+  grep -qF -- "object-missing — object-identity ${CHANGED_ASSET}: the origin answered 404" "$CHANGED_RECORD/release-check.txt"; then
+  record ok 'the check asked the origin for the older release'"'"'s asset and refused its answer'
 else
-  record fail 'the check named the older release'"'"'s asset as missing from the origin' \
+  record fail 'the check asked the origin for the older release'"'"'s asset and refused its answer' \
     "$(cat "$CHANGED_RECORD/release-check.txt" 2>/dev/null || echo 'no release-check.txt')"
 fi
 

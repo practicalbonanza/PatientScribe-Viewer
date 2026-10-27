@@ -56,17 +56,24 @@ template on purpose: a boundary parameter with a default is a value in a public 
 assembled from an empty default is a question better never asked.
 
 `scripts/infra/scan-private-values.mjs` is what holds this. It reads the tracked tree plus every
-intended-public untracked file and refuses account-number shapes, literal ARNs, AWS key shapes, and —
-if you have an overlay locally — any value out of it. The overlay it reads is the one at the default
-path unless `--overlay <path>` names another; the option changes which values are looked for and never
-which files are read, and a named overlay that is missing or is not a parameters array is a run that
-cannot run rather than a clean one. That last rule has two expected classes of report, and the scanner
-is deliberately taught about neither: with an overlay present the run reports the `ApiOrigin` value,
-and the `DomainName` value where the overlay carries one (a dev overlay's is empty and is never looked
-for), at every tracked file that carries it, and those reports are adjudicated at review rather than
-suppressed in code. Without an overlay — which is how it runs in CI — the run is clean. What catches a
-CHANGED `ApiOrigin` is not this scan but the release check, which derives its expected `connect-src`
-from the committed table and compares it against the live response header.
+intended-public untracked file and refuses account-number shapes, literal ARNs, AWS key shapes,
+and — if you have an overlay locally — any value out of it. The overlay it reads is the one at the
+default path unless `--overlay <path>` names another; the option changes which values are looked
+for and never which files are read, and a named overlay that is missing or is not a parameters
+array is a run that cannot run rather than a clean one. Each report of an overlay value names the
+parameter it came from, when the template declares that name, and never the value. Three
+parameters' values are not looked for when they are values the public template itself states:
+`Environment`'s allowed values (`dev` or `prod`), `AccessLogRetentionDays` within its bounds of
+`1` to `30`, and `RequestCountAlarmThreshold`'s default; any other value of theirs is looked for
+like any other. With an overlay present, a run on this tree reports the `ApiOrigin` value, and the
+`DomainName` value where the overlay carries one (a dev overlay's is empty and is never looked
+for), at every tracked file that carries it, both public by design, and the scanner is
+deliberately taught about neither. A report under any other parameter is read at review: it is
+either an overlay value that happens to equal a string the tree carries for its own reasons, or a
+leak. Those reports are adjudicated at review rather than suppressed in code. Without an overlay —
+which is how it runs in CI — the run is clean. What catches a CHANGED `ApiOrigin` is not this scan
+but the release check, which derives its expected `connect-src` from the committed table and
+compares it against the live response header.
 
 On this directory and `scripts/infra/` the scanner also refuses e-mail addresses, which is where an
 ops contact would land if one ever did.
@@ -130,11 +137,10 @@ a browser holding a query-shaped variant is holding bytes that cannot change. A 
 is *not* an allowlisted asset is `no-store`, like everything else that is not an asset.
 
 **Cookies.** This origin sets none and receives none, and the check asserts all three readings of
-that. While the viewer is on a CloudFront default domain the point is close to moot — that domain is
-on the public suffix list, so nothing can set a cookie spanning it. A custom domain changes the
-calculus, because a cookie scoped to a parent domain reaches every host under it. That assessment
-belongs to whoever attaches the first custom domain, before they attach it, and it is not settled
-here.
+that. The development viewer is on a CloudFront default domain, which is on the public suffix list,
+so nothing can set a cookie spanning it. The production viewer is on its own registrable domain,
+directly under the .au public suffix, rather than under the domain of anything else, so no cookie
+scoped to a parent domain can reach it.
 
 ## Where the rest of it is checked
 
@@ -151,7 +157,9 @@ Not everything about this stack is provable from the stack.
   the alias name and the prod API origin are committed by design, as the key and the destination of
   the prod entry in the origin table.
 - **The distribution actually having been built the way this file says** — `assert-distribution.sh`,
-  at the deploy gate, reading the control plane back.
+  at the deploy gate, reading the control plane back. The read-back includes access logging being
+  off and no behaviour carrying a real-time log configuration. Log delivery set up through
+  CloudWatch Logs is configured outside the distribution and is outside what it reads.
 
 ## Putting a release on it
 

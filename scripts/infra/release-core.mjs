@@ -22,6 +22,7 @@
  *   node scripts/infra/release-core.mjs --manifest-field <manifest.json> <field>
  *   node scripts/infra/release-core.mjs --preflight-manifests <target.json> [<retained.json> ...]
  *   node scripts/infra/release-core.mjs --roster-union <roster.txt> <target-id> [--floor-file <path>]
+ *   node scripts/infra/release-core.mjs --union-assets-held <keys.txt> <target.json> [<union.json> ...]
  *   node scripts/infra/release-core.mjs --plan <manifest.json>
  *   node scripts/infra/release-core.mjs --listing-keys <listing.json>
  *   node scripts/infra/release-core.mjs --inventory <keys.txt> <out.json>
@@ -37,10 +38,12 @@
  * Exit codes: 0 = it answered, 1 = it refused, 2 = it could not run.
  */
 
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { closeSync, mkdtempSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   ASSET_CONTENT_TYPES,
@@ -551,6 +554,10 @@ export function planUploads(manifest) {
  * a model of this CLI that accepted one would be a model of a different CLI. It
  * is refused rather than followed.
  *
+ * The keys are written one per line for the shell to read back, so a key that
+ * carries a line feed or a carriage return would come back as two keys, the
+ * second of them one nothing listed. A listing carrying one is refused.
+ *
  * @param {unknown} listing
  * @returns {{ keys: string[], refusals: string[] }}
  */
@@ -571,12 +578,23 @@ export function listingKeys(listing) {
   const contents = Array.isArray(root['Contents']) ? root['Contents'] : [];
   /** @type {string[]} */
   const keys = [];
+  /** @type {string[]} */
+  const refusals = [];
   for (const entry of contents) {
     const record = asObject(entry);
     const key = record === null ? undefined : record['Key'];
     if (typeof key === 'string' && key !== '') {
+      if (/[\n\r]/.test(key)) {
+        refusals.push(
+          `the listing carries the key ${JSON.stringify(key)}, which holds a line break and cannot be written one key per line`,
+        );
+        continue;
+      }
       keys.push(key);
     }
+  }
+  if (refusals.length > 0) {
+    return { keys: [], refusals };
   }
   return { keys: keys.sort(byBytes), refusals: [] };
 }
@@ -746,6 +764,49 @@ export function rosterUnion(stems, target, floor, floorName = 'the floor') {
     stems: stems.filter((stem) => stem !== target && (floorFrom === null || byBytes(stem, floorFrom) >= 0)),
     refusals,
   };
+}
+
+/**
+ * Every union asset the origin will not hold once the target's uploads land.
+ *
+ * The check asks the origin for every object under the asset prefix that every
+ * union manifest names, and refuses one that is not there. So a union asset that
+ * the origin does not list now, and that the target does not upload, is a
+ * refusal the check is certain to make — after the uploads, the entry point and
+ * the invalidation, where a rollback runs the same union and refuses the same
+ * way. Asked here instead, from the listing the prior-release capture already
+ * took, before anything is put.
+ *
+ * Keys, by THE KEY RULE: a path with its single leading slash removed and
+ * nothing else changed. The target's planned uploads are read through the same
+ * plan the switch performs, so "the target uploads it" means exactly what the
+ * switch will put.
+ *
+ * @param {readonly string[]} keys What the origin listing holds.
+ * @param {ReleaseManifest} target
+ * @param {readonly ReleaseManifest[]} union
+ * @returns {{ key: string, path: string, releaseId: string }[]} One entry per
+ *   missing asset and union release naming it, in union order and then byte order.
+ */
+export function unionAssetsMissing(keys, target, union) {
+  const held = new Set(keys);
+  for (const upload of planUploads(target).plan) {
+    held.add(upload.key);
+  }
+  /** @type {{ key: string, path: string, releaseId: string }[]} */
+  const missing = [];
+  for (const manifest of union) {
+    for (const path of Object.keys(manifest.objects).sort(byBytes)) {
+      if (!path.startsWith(ASSET_PREFIX)) {
+        continue;
+      }
+      const key = path.slice(1);
+      if (!held.has(key)) {
+        missing.push({ key, path, releaseId: manifest.release_id });
+      }
+    }
+  }
+  return missing;
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,6 +1196,48 @@ function run(argv) {
     return 0;
   }
 
+  if (mode === '--union-assets-held') {
+    const keysFile = argv[1];
+    const targetFile = argv[2];
+    if (keysFile === undefined || targetFile === undefined) {
+      cannotRun('usage: --union-assets-held <keys.txt> <target.json> [<union.json> ...]');
+    }
+    const keys = readText(keysFile)
+      .split('\n')
+      .filter((line) => line !== '');
+    const read = readManifestDocument(readText(targetFile), targetFile);
+    if (read.manifest === null) {
+      cannotRun(read.refusals.join('; '));
+    }
+    const target = read.manifest;
+    const planned = planUploads(target);
+    if (planned.refusals.length > 0) {
+      cannotRun(planned.refusals.join('; '));
+    }
+    /** @type {ReleaseManifest[]} */
+    const union = [];
+    for (const file of argv.slice(3)) {
+      const one = readManifestDocument(readText(file), file);
+      if (one.manifest === null) {
+        cannotRun(one.refusals.join('; '));
+      }
+      union.push(one.manifest);
+    }
+    const missing = unionAssetsMissing(keys, target, union);
+    if (missing.length > 0) {
+      refuse(
+        missing.map(
+          (one) =>
+            `the origin holds no ${one.key}, which the union release ${one.releaseId} names as ${one.path}, and the target ${target.release_id} does not upload it`,
+        ),
+      );
+    }
+    process.stdout.write(
+      `release-core — every asset of ${union.length} union manifest(s) is on the origin or uploaded by the target\n`,
+    );
+    return 0;
+  }
+
   if (mode === '--plan') {
     const file = argv[1];
     if (file === undefined) {
@@ -1280,7 +1383,7 @@ function run(argv) {
   }
 
   return cannotRun(
-    'usage: --read-output | --read-output-raw | --read-json | --check-remote | --manifest-field | --preflight-manifests | --is-release-id | --roster-entries | --roster-union | --plan | --listing-keys | --inventory | --scan-release-comment | --sha256 | --run-id | --retain-until | --log-body | --self-test',
+    'usage: --read-output | --read-output-raw | --read-json | --check-remote | --manifest-field | --preflight-manifests | --is-release-id | --roster-entries | --roster-union | --union-assets-held | --plan | --listing-keys | --inventory | --scan-release-comment | --sha256 | --run-id | --retain-until | --log-body | --self-test',
   );
 }
 
@@ -1454,6 +1557,19 @@ function selfTest() {
   record('a merged listing reads its keys', merged.keys.length === 2, JSON.stringify(merged));
   const truncated = listingKeys({ Contents: [{ Key: 'index.html' }], NextToken: 'more' });
   record('a truncated listing refuses', truncated.refusals.length === 1, JSON.stringify(truncated));
+  for (const [label, key] of /** @type {readonly [string, string][]} */ ([
+    ['a line feed', `assets/${'a'.repeat(64)}.js\nassets/${'b'.repeat(64)}.js`],
+    ['a carriage return', `assets/${'a'.repeat(64)}.js\rassets/${'b'.repeat(64)}.js`],
+  ])) {
+    const broken = listingKeys({ Contents: [{ Key: 'index.html' }, { Key: key }] });
+    record(
+      `a listing with a key carrying ${label} refuses, saying it cannot be written one key per line`,
+      broken.keys.length === 0 &&
+        broken.refusals.length === 1 &&
+        broken.refusals.some((line) => line.includes('cannot be written one key per line')),
+      JSON.stringify(broken),
+    );
+  }
 
   const inventory = inventoryDocument(['index.html', 'js/config.js']);
   record(
@@ -1664,6 +1780,75 @@ function selfTest() {
     strayTarget.stems.length === 0 && strayTarget.refusals.some((line) => line.includes('is not a release identifier')),
     JSON.stringify(strayTarget),
   );
+
+  // Union assets the origin will not hold: the refusal at the prior-release
+  // capture, before anything is put. The target is the conformant manifest; a
+  // union release built from a changed site names one asset it does not.
+  const heldTarget = readManifestDocument(conformantManifest(), 'target').manifest;
+  const strangeAsset = `/assets/${'9'.repeat(64)}.js`;
+  const changedText = conformantManifest({
+    commit: '9f8e7d6c5b4a39281706f5e4d3c2b1a098765432',
+    release_id: '20260601T080000Z-9f8e7d6c5b4a',
+    objects: { [strangeAsset]: '9'.repeat(64), [ENTRY_POINT]: 'd'.repeat(64), [CONFIG_PATH]: 'e'.repeat(64) },
+  });
+  const changed = readManifestDocument(changedText, 'changed').manifest;
+  const sharedText = conformantManifest({
+    commit: 'f0e1d2c3b4a596873625140312345678900abcde',
+    release_id: '20260701T101500Z-f0e1d2c3b4a5',
+    objects: { [`/assets/${'b'.repeat(64)}.js`]: 'b'.repeat(64), [ENTRY_POINT]: 'd'.repeat(64) },
+  });
+  const shared = readManifestDocument(sharedText, 'shared').manifest;
+  if (heldTarget === null || changed === null || shared === null) {
+    record('the union-asset manifests read', false, 'one of them did not');
+  } else {
+    const strangeKey = strangeAsset.slice(1);
+    const missingOne = unionAssetsMissing(['index.html', 'js/config.js'], heldTarget, [changed]);
+    record(
+      'a union asset neither listed nor uploaded by the target refuses, naming its key and the release that names it',
+      missingOne.length === 1 && missingOne[0]?.key === strangeKey && missingOne[0]?.releaseId === changed.release_id,
+      JSON.stringify(missingOne),
+    );
+    const listed = unionAssetsMissing(['index.html', 'js/config.js', strangeKey], heldTarget, [changed]);
+    record('a union asset the origin lists passes', listed.length === 0, JSON.stringify(listed));
+    const uploaded = unionAssetsMissing([], heldTarget, [shared]);
+    record('a union asset present only because the target uploads it passes', uploaded.length === 0, JSON.stringify(uploaded));
+    const noUnion = unionAssetsMissing([], heldTarget, []);
+    record('an empty union passes', noUnion.length === 0, JSON.stringify(noUnion));
+    const slashed = unionAssetsMissing([strangeAsset], heldTarget, [changed]);
+    record(
+      'a listed key is matched by THE KEY RULE, so a key spelled with its leading slash is not the asset',
+      slashed.length === 1 && slashed[0]?.key === strangeKey,
+      JSON.stringify(slashed),
+    );
+
+    // And through the command line, for its three exits.
+    const self = fileURLToPath(import.meta.url);
+    const keysFile = join(dir, 'keys.txt');
+    const targetFile = join(dir, 'target.json');
+    const changedFile = join(dir, 'changed.json');
+    writeFileSync(targetFile, conformantManifest());
+    writeFileSync(changedFile, changedText);
+    writeFileSync(keysFile, 'index.html\njs/config.js\n');
+    const refused = spawnSync(process.execPath, [self, '--union-assets-held', keysFile, targetFile, changedFile], {
+      encoding: 'utf8',
+    });
+    record(
+      'the command line refuses a missing union asset with exit 1, naming the key and the release',
+      refused.status === 1 && refused.stderr.includes(strangeKey) && refused.stderr.includes(changed.release_id),
+      `exit ${String(refused.status)}: ${refused.stderr}`,
+    );
+    writeFileSync(keysFile, `index.html\njs/config.js\n${strangeKey}\n`);
+    const passed = spawnSync(process.execPath, [self, '--union-assets-held', keysFile, targetFile, changedFile], {
+      encoding: 'utf8',
+    });
+    record('the command line passes a listed union asset with exit 0', passed.status === 0, `exit ${String(passed.status)}: ${passed.stderr}`);
+    const unusable = spawnSync(
+      process.execPath,
+      [self, '--union-assets-held', join(dir, 'no-such-keys.txt'), targetFile, changedFile],
+      { encoding: 'utf8' },
+    );
+    record('the command line cannot run on an unreadable keys file, with exit 2', unusable.status === 2, `exit ${String(unusable.status)}`);
+  }
 
   if (failures === 0) {
     process.stdout.write('release-core self-test — PASS\n');

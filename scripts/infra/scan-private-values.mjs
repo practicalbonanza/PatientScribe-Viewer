@@ -32,12 +32,16 @@
  * reports it. So a run with an overlay that carries them reports each at every
  * file that carries it, and those reports are an expected set that is
  * adjudicated at review. No allowlist is added for either: the allowlist here is
- * consulted only for the pattern rules, overlay values are reported
- * unconditionally, and which parameter a value came from is not carried this far
- * — so an entry that looked like it held would in fact have said nothing at all
- * about a CHANGED value. What catches that is the release check, which derives
- * its expected `connect-src` from the committed table and compares it against
- * the live response header.
+ * consulted only for the pattern rules, and an entry that looked like it held
+ * would in fact have said nothing at all about a CHANGED value. What catches
+ * that is the release check, which derives its expected `connect-src` from the
+ * committed table and compares it against the live response header. Which
+ * parameter a value came from is carried this far, for the report only: a report
+ * names its parameter when the public template declares that name, and never its
+ * value. Nothing is skipped by parameter except the three at
+ * TEMPLATE_STATED_VALUES, and only for values the public template itself states
+ * for each: `Environment`'s allowed values, `AccessLogRetentionDays` within its
+ * bounds, and `RequestCountAlarmThreshold`'s default.
  *
  * Which overlay is read. By default the one at `infra/parameters.json`, if it
  * has been created locally at all, exactly as it always has been. `--overlay`
@@ -89,6 +93,12 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * all. `--overlay` names another; see `resolveArguments`.
  */
 const OVERLAY = join(REPO_ROOT, 'infra', 'parameters.json');
+
+/**
+ * The public template, whose parameter names are the only keys a report may
+ * print.
+ */
+const TEMPLATE = join(REPO_ROOT, 'infra', 'viewer-stack.yaml');
 
 /**
  * The directories the e-mail rule applies to, relative to the repository root.
@@ -234,6 +244,166 @@ function inContactScope(file) {
 }
 
 /**
+ * The parameters whose values are not looked for, each with the values of it
+ * that are skipped: exactly the values the public template itself states.
+ *
+ * `Environment` is skipped when it is one of its `AllowedValues`, `dev` or
+ * `prod`; `AccessLogRetentionDays` when it is a plain integer within its
+ * `MinValue` and `MaxValue`, 1 to 30, written without a leading zero; and
+ * `RequestCountAlarmThreshold` when it is exactly its `Default`, `10000`. Each of
+ * those is in the public template already, and looking for `prod`, `dev` or
+ * `10000` as a substring of every line buries every other report under hundreds
+ * of ordinary words and numbers. Every other value of these three parameters is
+ * looked for like any other value.
+ *
+ * Exactly three, by name, here and nowhere else. Every other parameter's value
+ * is looked for, whatever it is.
+ *
+ * @type {Readonly<Record<string, RegExp>>}
+ */
+export const TEMPLATE_STATED_VALUES = Object.freeze({
+  Environment: /^(?:dev|prod)$/,
+  AccessLogRetentionDays: /^(?:[1-9]|[12][0-9]|30)$/,
+  RequestCountAlarmThreshold: /^10000$/,
+});
+
+/**
+ * Whether a value is one the public template itself states for its parameter.
+ *
+ * @param {string} key
+ * @param {string} value
+ * @returns {boolean}
+ */
+function statedByTemplate(key, value) {
+  if (!Object.prototype.hasOwnProperty.call(TEMPLATE_STATED_VALUES, key)) {
+    return false;
+  }
+  const stated = TEMPLATE_STATED_VALUES[key];
+  return stated !== undefined && stated.test(value);
+}
+
+/**
+ * The parameter names a template declares: the keys directly under its
+ * top-level `Parameters:`.
+ *
+ * Read by lines rather than by a YAML library, because the shape is this
+ * repository's own and narrow: `Parameters:` alone on a line at the left margin;
+ * each name on a line of its own, exactly two spaces in, ending in its colon;
+ * and the block ending at the next line that starts at the left margin and is
+ * not a comment. A line nested deeper is a property of a parameter, not a name.
+ *
+ * @param {string} text
+ * @returns {Set<string>}
+ */
+export function templateParameterNames(text) {
+  /** @type {Set<string>} */
+  const names = new Set();
+  let inside = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (!inside) {
+      inside = line === 'Parameters:';
+      continue;
+    }
+    if (line === '' || line.startsWith('#')) {
+      continue;
+    }
+    if (!line.startsWith(' ')) {
+      break;
+    }
+    const named = /^ {2}([A-Za-z0-9]+):\s*$/.exec(line);
+    if (named !== null && named[1] !== undefined) {
+      names.add(named[1]);
+    }
+  }
+  return names;
+}
+
+/**
+ * The parameter names the template at `file` declares, read once per run — or
+ * `null` where it cannot be read or declares none, in which case no report
+ * names a parameter at all.
+ *
+ * @param {string} [file]
+ * @returns {Set<string> | null}
+ */
+export function declaredParameterNames(file = TEMPLATE) {
+  try {
+    const names = templateParameterNames(readFileSync(file, 'utf8'));
+    return names.size > 0 ? names : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One value out of an overlay, with what its report may say about where it came
+ * from: the parameter's name when the public template declares it, the entry's
+ * position when it does not, and nothing when the template could not be read.
+ * The value itself never goes to the report.
+ *
+ * @typedef {object} OverlayValue
+ * @property {string} value
+ * @property {string | null} shown
+ */
+
+/**
+ * The values an overlay carries that are looked for, each with what its report
+ * may name — or why the overlay cannot say. The one place both overlays are
+ * read from, so the rules below hold for both.
+ *
+ *   - The empty string is skipped: it is how a dev overlay says a prod-only
+ *     parameter has no value, and every line contains it.
+ *   - Anything carrying the example file's `REPLACE-ME` marker is skipped: it is
+ *     a placeholder, public by construction.
+ *   - A value at TEMPLATE_STATED_VALUES is skipped.
+ *   - A key is named only when the template declares it. Otherwise the report
+ *     names the entry's index: a key that is not a declared name may be anything
+ *     at all, a value pasted into the wrong slot included, and this tool does
+ *     not print what it cannot show is public.
+ *
+ * Strict, for an overlay named on the command line: a document that is not a
+ * parameters array, or an entry that is not a string `ParameterKey` and a string
+ * `ParameterValue`, is a reason. Lenient, for the default overlay: those are
+ * skipped, as they always have been.
+ *
+ * @param {unknown} parsed
+ * @param {{ strict: boolean, declared: ReadonlySet<string> | null }} how
+ * @returns {{ values: OverlayValue[] } | { why: string }}
+ */
+export function extractOverlayValues(parsed, { strict, declared }) {
+  if (!Array.isArray(parsed)) {
+    return strict ? { why: 'is not a parameters array' } : { values: [] };
+  }
+  /** @type {OverlayValue[]} */
+  const values = [];
+  for (const [index, entry] of parsed.entries()) {
+    const record =
+      entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+        ? /** @type {Record<string, unknown>} */ (entry)
+        : null;
+    const key = record === null ? undefined : record['ParameterKey'];
+    const value = record === null ? undefined : record['ParameterValue'];
+    if (strict && (typeof key !== 'string' || typeof value !== 'string')) {
+      return { why: `carries an entry, at ${index}, that is not a ParameterKey and a ParameterValue` };
+    }
+    if (typeof value !== 'string') {
+      continue;
+    }
+    const name = typeof key === 'string' ? key : '';
+    if (value === '' || value.startsWith('REPLACE-ME') || statedByTemplate(name, value)) {
+      continue;
+    }
+    /** @type {string | null} */
+    let shown = null;
+    if (declared !== null) {
+      shown = declared.has(name) ? name : `the entry at index ${index}, whose ParameterKey the template does not declare`;
+    }
+    values.push({ value, shown });
+  }
+  return { values };
+}
+
+/**
  * Every literal value the local overlay carries, if there is one.
  *
  * The overlay is ignored by git and is never in the scanned set, so this does not
@@ -245,23 +415,19 @@ function inContactScope(file) {
  * roster — was the one thing this rule could not have caught. Noise is a reason
  * to look at a finding, not a reason to not produce it.
  *
- * Exactly two values are skipped, and both are skipped because they are not
- * values:
+ * Which values are skipped, and what a report of the others may name, is decided
+ * by `extractOverlayValues`, leniently: a default overlay that is missing, is
+ * not JSON or is not an array carries no values.
  *
- *   - the empty string, which is how a dev overlay says a prod-only parameter has
- *     no value. Every line of every file contains the empty string, so matching
- *     on it would redden the tree unconditionally.
- *   - anything still carrying the example file's `REPLACE-ME` marker, which is a
- *     placeholder that is public by construction — it is in
- *     parameters.json.example, in this repository, on purpose.
- *
- * @returns {string[]}
+ * @param {ReadonlySet<string> | null} declared The template's parameter names.
+ * @param {string} [file] The default path unless the self-test names a fixture.
+ * @returns {OverlayValue[]}
  */
-export function overlayValues() {
+export function overlayValues(declared, file = OVERLAY) {
   /** @type {string} */
   let text;
   try {
-    text = readFileSync(OVERLAY, 'utf8');
+    text = readFileSync(file, 'utf8');
   } catch {
     return [];
   }
@@ -272,29 +438,16 @@ export function overlayValues() {
   } catch {
     return [];
   }
-  if (!Array.isArray(parsed)) {
-    return [];
-  }
-  /** @type {string[]} */
-  const values = [];
-  for (const entry of parsed) {
-    if (entry === null || typeof entry !== 'object') {
-      continue;
-    }
-    const value = /** @type {Record<string, unknown>} */ (entry)['ParameterValue'];
-    if (typeof value === 'string' && value !== '' && !value.startsWith('REPLACE-ME')) {
-      values.push(value);
-    }
-  }
-  return values;
+  const read = extractOverlayValues(parsed, { strict: false, declared });
+  return 'why' in read ? [] : read.values;
 }
 
 /**
  * Every literal value an overlay NAMED on the command line carries — or why
  * this run cannot say.
  *
- * The same values `overlayValues` takes, skipped for the same two reasons, out
- * of a file somebody pointed this run at. The difference is what a problem with
+ * The same values `overlayValues` takes, through the same extractor, out of a
+ * file somebody pointed this run at. The difference is what a problem with
  * the file means. The default overlay is optional: a checkout without one is
  * how this runs in CI, and a missing file there is the ordinary case. A named
  * one is not optional — somebody said which values to look for — so a path that
@@ -308,9 +461,10 @@ export function overlayValues() {
  * and it carries no values.
  *
  * @param {string} file
- * @returns {{ values: string[] } | { why: string }}
+ * @param {ReadonlySet<string> | null} declared The template's parameter names.
+ * @returns {{ values: OverlayValue[] } | { why: string }}
  */
-export function namedOverlayValues(file) {
+export function namedOverlayValues(file, declared) {
   /** @type {string} */
   let text;
   try {
@@ -325,26 +479,8 @@ export function namedOverlayValues(file) {
   } catch {
     return { why: `the overlay ${file} is not JSON` };
   }
-  if (!Array.isArray(parsed)) {
-    return { why: `the overlay ${file} is not a parameters array` };
-  }
-  /** @type {string[]} */
-  const values = [];
-  for (const [index, entry] of parsed.entries()) {
-    const record =
-      entry !== null && typeof entry === 'object' && !Array.isArray(entry)
-        ? /** @type {Record<string, unknown>} */ (entry)
-        : null;
-    const key = record === null ? undefined : record['ParameterKey'];
-    const value = record === null ? undefined : record['ParameterValue'];
-    if (typeof key !== 'string' || typeof value !== 'string') {
-      return { why: `the overlay ${file} carries an entry, at ${index}, that is not a ParameterKey and a ParameterValue` };
-    }
-    if (value !== '' && !value.startsWith('REPLACE-ME')) {
-      values.push(value);
-    }
-  }
-  return { values };
+  const read = extractOverlayValues(parsed, { strict: true, declared });
+  return 'why' in read ? { why: `the overlay ${file} ${read.why}` } : read;
 }
 
 /**
@@ -401,7 +537,8 @@ export function resolveArguments(args, cwd = process.cwd()) {
 /**
  * @param {string} file Repository-relative path, used for scoping and reporting.
  * @param {string} contents
- * @param {readonly string[]} secrets Literal values that must not appear.
+ * @param {readonly OverlayValue[]} secrets Literal values that must not appear,
+ *   each with what its report may name.
  * @returns {Violation[]}
  */
 export function scanText(file, contents, secrets) {
@@ -425,13 +562,13 @@ export function scanText(file, contents, secrets) {
     }
 
     for (const secret of secrets) {
-      if (line.includes(secret)) {
+      if (line.includes(secret.value)) {
         violations.push({
           file,
           line: index + 1,
           rule: 'overlay-value',
           why: 'this is a literal value out of the deploy overlay',
-          match: '(withheld)',
+          match: secret.shown === null ? '(withheld)' : `(withheld: ${secret.shown})`,
         });
       }
     }
@@ -477,11 +614,20 @@ function fileSet(paths) {
 function scan(paths, which = { overlay: OVERLAY, named: false }) {
   const files = fileSet(paths);
 
-  /** @type {string[]} */
+  // The template's parameter names, read once: a report names a parameter only
+  // when it is one of them.
+  const declared = declaredParameterNames();
+  if (declared === null) {
+    process.stdout.write(
+      'scan-private-values — the template\'s parameter names could not be read, so no report names the parameter it came from\n',
+    );
+  }
+
+  /** @type {OverlayValue[]} */
   let secrets;
   let source = 'the local overlay';
   if (which.named) {
-    const read = namedOverlayValues(which.overlay);
+    const read = namedOverlayValues(which.overlay, declared);
     if ('why' in read) {
       process.stderr.write(`scan-private-values — cannot run: ${read.why}, so this run cannot say which values it is looking for\n`);
       return 2;
@@ -489,7 +635,7 @@ function scan(paths, which = { overlay: OVERLAY, named: false }) {
     secrets = read.values;
     source = 'the overlay named on the command line';
   } else {
-    secrets = overlayValues();
+    secrets = overlayValues(declared);
   }
 
   /** @type {Violation[]} */
@@ -659,7 +805,9 @@ function selfTest() {
 
   // The overlay-value rule, which only has anything to say when an overlay
   // exists locally.
-  const leaked = scanText('infra/README.md', 'the bucket is viewer-origin-abcdefghij', ['viewer-origin-abcdefghij']);
+  const leaked = scanText('infra/README.md', 'the bucket is viewer-origin-abcdefghij', [
+    { shown: 'OriginBucketName', value: 'viewer-origin-abcdefghij' },
+  ]);
   record(
     'a literal overlay value reddens wherever it appears',
     leaked.some((violation) => violation.rule === 'overlay-value'),
@@ -667,9 +815,120 @@ function selfTest() {
   );
 
   record(
-    'the overlay value is not echoed into the report',
-    leaked.every((violation) => !violation.match.includes('viewer-origin')),
-    'the finding quoted the value it was refusing',
+    'the overlay value is not echoed into the report, and the parameter it came from is',
+    leaked.length > 0 &&
+      leaked.every((violation) => !violation.match.includes('viewer-origin') && violation.match === '(withheld: OriginBucketName)'),
+    `the finding read ${JSON.stringify(leaked.map((violation) => violation.match))}`,
+  );
+
+  // ------------------------------------------------------------------
+  // The template's parameter names, and the one extractor both overlays use.
+  // ------------------------------------------------------------------
+  //
+  // The reader first, on lines written here, then on the template itself.
+  const sampleTemplate = [
+    'Description: not a parameter',
+    'Parameters:',
+    '  # a comment inside the block',
+    '  First:',
+    '    Type: String',
+    '',
+    '# a comment at the margin, still inside',
+    '  Second:',
+    '    Default: Third',
+    'Conditions:',
+    '  NotAParameter: !Equals [a, b]',
+  ].join('\n');
+  record(
+    'the template reader takes the names directly under Parameters and nothing else',
+    [...templateParameterNames(sampleTemplate)].join(',') === 'First,Second',
+    JSON.stringify([...templateParameterNames(sampleTemplate)]),
+  );
+  const declared = declaredParameterNames();
+  record(
+    'the real template declares the parameters an overlay carries',
+    declared !== null &&
+      ['Environment', 'ApiOrigin', 'AccountId', 'LogOpsPrefix', 'DomainName', 'RequestCountAlarmThreshold', 'AccessLogRetentionDays'].every(
+        (name) => declared.has(name),
+      ),
+    JSON.stringify(declared === null ? null : [...declared]),
+  );
+  record(
+    'a template that cannot be read declares nothing, rather than an empty set a report could be checked against',
+    declaredParameterNames(join(tmpdir(), `viewer-scan-no-template-${process.pid}.yaml`)) === null,
+    'it answered something',
+  );
+
+  // A value pasted into the key slot, assembled for the reason every seed is.
+  const undeclaredKey = `${'synthetic'}-${'bucket'}-${'7f3a'}`;
+  const markerValue = `${'public'}-${'marker'}-${'for'}-${'this'}-${'case'}`;
+  /** @type {readonly unknown[]} */
+  const extractable = [
+    { ParameterKey: 'OriginBucketName', ParameterValue: 'viewer-origin-abcdefghij' },
+    { ParameterKey: undeclaredKey, ParameterValue: markerValue },
+    { ParameterKey: `OriginBucketName${'\n'}injected`, ParameterValue: `${markerValue}-two` },
+    { ParameterKey: 'Environment', ParameterValue: 'prod' },
+    { ParameterKey: 'RequestCountAlarmThreshold', ParameterValue: '10000' },
+    { ParameterKey: 'AccessLogRetentionDays', ParameterValue: '30' },
+    { ParameterKey: 'LogBucketName', ParameterValue: '' },
+    { ParameterKey: 'AlarmTopicArn', ParameterValue: 'REPLACE-ME--placeholder' },
+  ];
+  for (const strict of [true, false]) {
+    const mode = strict ? 'the named-overlay reading' : 'the default-overlay reading';
+    const read = extractOverlayValues(extractable, { strict, declared });
+    const values = 'why' in read ? [] : read.values;
+    record(
+      `${mode} names a parameter the template declares`,
+      values.some((one) => one.value === 'viewer-origin-abcdefghij' && one.shown === 'OriginBucketName'),
+      JSON.stringify(values.map((one) => one.shown)),
+    );
+    record(
+      `${mode} still looks for the value of a key the template does not declare, and names its index rather than the key`,
+      values.some(
+        (one) => one.value === markerValue && one.shown === 'the entry at index 1, whose ParameterKey the template does not declare',
+      ) && values.every((one) => one.shown === null || !one.shown.includes(undeclaredKey)),
+      JSON.stringify(values.map((one) => one.shown)),
+    );
+    record(
+      `${mode} does not print a key carrying a line feed`,
+      values.some((one) => one.value === `${markerValue}-two` && one.shown !== null && one.shown.startsWith('the entry at index 2,')) &&
+        values.every((one) => one.shown === null || !one.shown.includes('\n')),
+      JSON.stringify(values.map((one) => one.shown)),
+    );
+    record(
+      `${mode} skips the values the template states, the empty string and the placeholder, and nothing else`,
+      values.length === 3,
+      JSON.stringify(values.map((one) => one.shown)),
+    );
+    const unreadable = extractOverlayValues(extractable, { strict, declared: null });
+    record(
+      `${mode} names no parameter at all when the template could not be read`,
+      !('why' in unreadable) && unreadable.values.length === 3 && unreadable.values.every((one) => one.shown === null),
+      JSON.stringify(unreadable),
+    );
+  }
+  const strictRefusal = extractOverlayValues([{ ParameterKey: 'Environment' }], { strict: true, declared });
+  const lenientSkip = extractOverlayValues([{ ParameterKey: 'Environment' }, 7, null], { strict: false, declared });
+  record(
+    'the named-overlay reading refuses an entry that is not a key and a value; the default-overlay reading skips it',
+    'why' in strictRefusal && !('why' in lenientSkip) && lenientSkip.values.length === 0,
+    `${JSON.stringify(strictRefusal)} ${JSON.stringify(lenientSkip)}`,
+  );
+
+  // The default-overlay path itself, through the wrapper the default path
+  // takes, pointed at a fixture so that nothing here reads the default path.
+  const extractDir = mkdtempSync(join(tmpdir(), 'viewer-scan-extract-'));
+  const defaultFixture = join(extractDir, 'default-overlay.json');
+  writeFileSync(defaultFixture, `${JSON.stringify(extractable)}\n`);
+  const throughDefault = overlayValues(declared, defaultFixture);
+  rmSync(extractDir, { recursive: true, force: true });
+  record(
+    'the default-overlay path carries the key, the skip and the undeclared-key rule',
+    throughDefault.length === 3 &&
+      throughDefault.some((one) => one.shown === 'OriginBucketName') &&
+      throughDefault.some((one) => one.shown === 'the entry at index 1, whose ParameterKey the template does not declare') &&
+      throughDefault.every((one) => !['prod', '10000', '30'].includes(one.value)),
+    JSON.stringify(throughDefault.map((one) => one.shown)),
   );
 
   const dir = mkdtempSync(join(tmpdir(), 'viewer-scan-'));
@@ -782,7 +1041,7 @@ function selfTest() {
       seededOverlay,
       `${JSON.stringify([
         { ParameterKey: 'Environment', ParameterValue: 'a-flavour-under-test' },
-        { ParameterKey: 'SeededParameter', ParameterValue: seededValue },
+        { ParameterKey: 'OriginBucketName', ParameterValue: seededValue },
         { ParameterKey: 'EmptyParameter', ParameterValue: '' },
       ])}\n`,
     );
@@ -793,6 +1052,7 @@ function selfTest() {
     mkdirSync(join(fixtureRoot, 'dirty'), { recursive: true });
     mkdirSync(join(fixtureRoot, 'clean'), { recursive: true });
     mkdirSync(join(fixtureRoot, 'named'), { recursive: true });
+    mkdirSync(join(fixtureRoot, 'fixed'), { recursive: true });
     writeFileSync(join(fixtureRoot, 'dirty', 'seeded.yaml'), `${seeded[0]?.line ?? ''}\n`);
     writeFileSync(join(fixtureRoot, 'clean', 'ordinary.md'), 'Nothing private lives in this file.\n');
     writeFileSync(join(fixtureRoot, 'named', 'carries-it.md'), `The value ${seededValue} is written here.\n`);
@@ -830,9 +1090,83 @@ function selfTest() {
       `exit ${namedRun.status}: ${namedRun.output}`,
     );
     record(
-      'and the value it found is not echoed into the report',
-      !namedRun.output.includes(seededValue),
-      'the finding quoted the value it was refusing',
+      'and the value it found is not echoed into the report, and the parameter it came from is',
+      !namedRun.output.includes(seededValue) && namedRun.output.includes('(withheld: OriginBucketName)'),
+      `the report read: ${namedRun.output}`,
+    );
+
+    // The three parameters whose values the template states. A value the
+    // template states for its parameter is not looked for at all, over a file
+    // that carries it; any other value of theirs is looked for, and reported
+    // under its parameter, like every other value.
+    for (const [label, entries, carried] of /** @type {readonly [string, Record<string, string>, string][]} */ ([
+      ['an Environment of prod', { Environment: 'prod' }, 'the prod flavour'],
+      ['an Environment of dev', { Environment: 'dev' }, 'the dev flavour'],
+      ['a threshold of 10000, its default', { RequestCountAlarmThreshold: '10000' }, 'a threshold of 10000'],
+      ['a retention of 30, its upper bound', { AccessLogRetentionDays: '30' }, 'a retention of 30 days'],
+      ['a retention of 7, within its bounds', { AccessLogRetentionDays: '7' }, 'a retention of 7 days'],
+    ])) {
+      const overlay = join(overlays, 'stated.json');
+      writeFileSync(
+        overlay,
+        `${JSON.stringify(Object.entries(entries).map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue })))}\n`,
+      );
+      writeFileSync(join(fixtureRoot, 'fixed', 'carries-it.md'), `This file names ${carried}.\n`);
+      const statedRun = runScanner(['--overlay', overlay, `${fixtureName}/fixed`]);
+      record(
+        `${label}, over a file carrying it, is not looked for: the template states it`,
+        statedRun.status === 0 && statedRun.output.includes('PASS'),
+        `exit ${statedRun.status}: ${statedRun.output}`,
+      );
+    }
+
+    // A value long enough is also read for in the report: a short value such as
+    // `x` or `030` is in the report's own words and paths, so for those only the
+    // parameter is read. The twelve digits are carried inside a word, where the
+    // account-number rule does not reach, so only this rule can report them.
+    const outsideSet = `${'prod'}${'uction'}`;
+    for (const [label, key, value, before] of /** @type {readonly [string, string, string, string][]} */ ([
+      ['an Environment outside the allowed set', 'Environment', outsideSet, ''],
+      ['a threshold of twelve digits', 'RequestCountAlarmThreshold', `${'123456'}${'789012'}`, 'owner'],
+      ['a threshold that is not a whole number', 'RequestCountAlarmThreshold', `${'10000'}${'.5'}`, ''],
+      ['a threshold that is not its default', 'RequestCountAlarmThreshold', `${'50'}${'00'}`, ''],
+      ['a retention above its bound', 'AccessLogRetentionDays', `${'3'}${'1'}`, ''],
+      ['a retention with a leading zero', 'AccessLogRetentionDays', `${'0'}${'30'}`, ''],
+      ['a retention that is not a number', 'AccessLogRetentionDays', 'x', ''],
+    ])) {
+      const overlay = join(overlays, 'unstated.json');
+      writeFileSync(overlay, `${JSON.stringify([{ ParameterKey: key, ParameterValue: value }])}\n`);
+      writeFileSync(join(fixtureRoot, 'fixed', 'carries-it.md'), `This file names ${before}${value} here.\n`);
+      const unstatedRun = runScanner(['--overlay', overlay, `${fixtureName}/fixed`]);
+      record(
+        `${label} is looked for like any other value, and reported under its parameter`,
+        unstatedRun.status === 1 &&
+          unstatedRun.output.includes(`${fixtureName}/fixed/carries-it.md:1  [overlay-value]`) &&
+          unstatedRun.output.includes(`(withheld: ${key})`),
+        `exit ${unstatedRun.status}: ${unstatedRun.output}`,
+      );
+      if (value.length >= 7) {
+        record(
+          `and the report of ${label} never carries the value`,
+          !unstatedRun.output.includes(value),
+          'the finding quoted the value it was refusing',
+        );
+      }
+    }
+
+    // A value pasted into the key slot: the value is still looked for, and the
+    // key is not printed, because the template does not declare it.
+    const reversedOverlay = join(overlays, 'reversed.json');
+    writeFileSync(reversedOverlay, `${JSON.stringify([{ ParameterKey: undeclaredKey, ParameterValue: markerValue }])}\n`);
+    writeFileSync(join(fixtureRoot, 'fixed', 'carries-it.md'), `This file names ${markerValue} here.\n`);
+    const reversedRun = runScanner(['--overlay', reversedOverlay, `${fixtureName}/fixed`]);
+    record(
+      'a key the template does not declare is not printed, and its value is still reported, by its index',
+      reversedRun.status === 1 &&
+        reversedRun.output.includes('(withheld: the entry at index 0, whose ParameterKey the template does not declare)') &&
+        !reversedRun.output.includes(undeclaredKey) &&
+        !reversedRun.output.includes(markerValue),
+      `exit ${reversedRun.status}: ${reversedRun.output}`,
     );
 
     // Which values, never which files: the same paths under the named overlay

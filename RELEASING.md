@@ -113,7 +113,11 @@ waits on another unit's stack being readable.
 **[2] The prior-release capture.** A fresh listing decides whether a prior entry point exists. Where it
 does not, the case is recorded as no-prior-release and nothing is read. Where it does, it is read and
 scanned for its release comment, and a served release the public tip does not publish stops the run
-rather than being mutated past — the printed way back leans on that manifest.
+rather than being mutated past — the printed way back leans on that manifest. Before that read, the same
+listing is held against the union: an `/assets/` object a union manifest names, which the origin does not
+list and the target does not upload, refuses here, naming its key and the release that names it. The
+check at [7] asks the origin for every such object, so this is the same refusal it would make after the
+uploads, the entry point and the invalidation, made before any mutation instead.
 
 **[3] and [4] The uploads, then the entry point.** Assets carry the immutable directive as object
 metadata and the content type their extension's table names; the origin table carries its document
@@ -156,8 +160,16 @@ union names.
 
 The corner this leaves is named rather than hidden. A published release whose upload is abandoned keeps
 the origin refusing — extra or missing union assets, both fail-closed by design — until its switch
-completes or a later gated retirement round removes its objects. No tool in this repository deletes
-anything. The kill path is available meanwhile: disable the distribution.
+completes or a later gated retirement round removes its objects. So does a release published at or after
+a flavour's floor and never switched onto that flavour, such as one a development switch turned back: it
+stays in that flavour's union, and every later switch there refuses at [2], before any mutation, unless
+its assets are already on that origin or that switch uploads them itself, until a later gated retirement
+round takes it off the roster. A rollback is the exception: it runs the driver of the release it returns
+to, so a rollback to a release built before the refusal at [2] existed meets such an asset at [7]
+instead, after the uploads, the entry point and the invalidation. That cannot follow a failure at the
+invalidation, the listing or the check, because the switch that failed had already held every asset of
+its union at [2] and landed every object of its own. No tool in this repository deletes anything. The
+kill path is available meanwhile: disable the distribution.
 
 **A failure at the invalidation, the listing or the check — the way out is BACK, within one header
 epoch.** Every object of the target landed before the entry point moved, so a rollback re-puts the prior
@@ -292,8 +304,9 @@ which is a thing to choose deliberately or not at all. The period defaults to 40
 `--retention-days` moves.
 
 **Append-only, and there is no delete tooling.** Nothing in this repository issues an S3 delete, removes a
-remote object, or retires a release. Release retirement is a later, gated round; until it exists, the
-retained roster is exactly the committed manifests at or after the flavour's floor, where a flavour has one
+remote object, or retires a release. Release retirement is a later, gated round; until it exists, the union
+the check is handed is every committed manifest other than the target at or after the flavour's floor,
+where a flavour has one, and every committed manifest other than the target where it has none
 (`release-floors/<flavour>`, one identifier and one line feed, written once in the publish commit of that
 flavour's first release, never edited; prod requires one; a switch or rollback below a floor refuses before
 mutation).

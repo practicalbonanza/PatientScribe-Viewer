@@ -48,8 +48,12 @@ FIXTURE_COMMIT='a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
 FIXTURE_ID="20260101T000000Z-$(printf '%s' "$FIXTURE_COMMIT" | cut -c1-12)"
 
 echo 'the transcriptions:'
+# Written to a file and indented afterwards, not piped: a pipeline's status is
+# its last command's, so the self-test's exit would be the indenting sed's and a
+# failing transcription self-test would be read here as a passing one.
 STATUS=0
-node "$ROOT/scripts/infra/frozen-spellings.mjs" --self-test | sed 's/^/  /' || STATUS=$?
+node "$ROOT/scripts/infra/frozen-spellings.mjs" --self-test > "$WORK/frozen.txt" 2>&1 || STATUS=$?
+sed 's/^/  /' "$WORK/frozen.txt"
 if [ "$STATUS" -eq 0 ]; then
   record ok 'every frozen spelling this build writes is still spelled that way at its source'
 else

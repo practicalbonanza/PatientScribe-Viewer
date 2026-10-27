@@ -318,6 +318,25 @@ aws_pinned s3api list-objects-v2 --bucket "$ORIGIN_BUCKET" --output json > "$REC
   refuse 'the origin bucket could not be listed, and the prior-release capture is what a failed switch is remediated from'
 node "$CORE" --listing-keys "$RECORD_DIR/listing-capture.json" > "$RECORD_DIR/keys-capture.txt" || exit 1
 
+# The union's assets, against that listing. The check at [7] asks the origin for
+# every asset every union manifest names, so one the origin does not hold now and
+# this target does not upload is a refusal [7] is certain to make, after the
+# uploads, the entry point and the invalidation. It is made here instead, while
+# nothing has been put. A printed rollback runs the driver of the release it
+# returns to, so it makes this refusal only if that release was built with it.
+set -- "$RECORD_DIR/keys-capture.txt" "$TARGET_MANIFEST"
+while IFS= read -r UNION_MANIFEST; do
+  [ -n "$UNION_MANIFEST" ] || continue
+  set -- "$@" "$UNION_MANIFEST"
+done < "$RECORD_DIR/union.txt"
+UNION_HELD_STATUS=0
+node "$CORE" --union-assets-held "$@" || UNION_HELD_STATUS=$?
+if [ "$UNION_HELD_STATUS" -eq 1 ]; then
+  refuse 'the origin does not hold every asset the union names, and this target does not upload the ones named above — this is the same refusal [7] would make after the uploads, the entry point and the invalidation, made before any mutation instead. Nothing has been put and nothing is logged. The ways out are those assets reaching this origin, or a later gated retirement round taking their release off the roster.'
+elif [ "$UNION_HELD_STATUS" -ne 0 ]; then
+  exit 1
+fi
+
 PRIOR_RELEASE_ID='no-prior-release'
 if grep -qx 'index.html' "$RECORD_DIR/keys-capture.txt"; then
   aws_pinned s3api get-object --bucket "$ORIGIN_BUCKET" --key index.html "$RECORD_DIR/prior-index.html" --output json > "$RECORD_DIR/get-object.json" ||

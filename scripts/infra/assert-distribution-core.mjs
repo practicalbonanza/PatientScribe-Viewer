@@ -33,6 +33,14 @@
  * still prints PASS. The shape is asserted as well — one alarm action, no OK
  * action, no insufficient-data action — because "notification only" is a claim
  * about what the alarm cannot do.
+ *
+ * Access logging is read back too. This design writes no access logs, and the
+ * template says so by carrying no logging setting, but a template says what was
+ * asked for; this is the control that keeps it true of what is there. So a
+ * distribution whose logging is on, or cannot be read as off, is refused, and so
+ * is any behaviour carrying a real-time log configuration. What this does not
+ * see: log delivery set up through CloudWatch Logs is configured outside the
+ * distribution, is not part of its configuration, and is not read here.
  */
 
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
@@ -64,6 +72,25 @@ function asObject(value) {
     return null;
   }
   return /** @type {Record<string, unknown>} */ (value);
+}
+
+/**
+ * What a value is, by type alone, for a refusal that must not print the value.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function typeName(value) {
+  if (value === undefined) {
+    return 'absent';
+  }
+  if (value === null) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return 'an array';
+  }
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
 }
 
 /**
@@ -223,6 +250,44 @@ export function assertDistribution({ stacks, distribution, alarms, expectedAlarm
     refusals.push(
       `the ${ASSET_PATH_PATTERN} behaviour carries response-headers policy ${JSON.stringify(assetBehavior['ResponseHeadersPolicyId'])}, and the stack built ${JSON.stringify(expectedAssetPolicy)}`,
     );
+  }
+
+  // Access logging, read back as off. The control plane answers with a Logging
+  // object whose Enabled is false for a distribution that writes no access logs,
+  // so only that reads as off. Enabled true is logging on; any other Enabled, and
+  // a Logging that is not an object, cannot be read as off, and each is a refusal
+  // of its own. A Logging that is not an object is named by its type, never by
+  // its value, which is not this check's to print.
+  const logging = asObject(config['Logging']);
+  if (logging === null) {
+    refusals.push(
+      `Logging is ${typeName(config['Logging'])}, so access logging cannot be read as off, and this design writes no access logs`,
+    );
+  } else if (logging['Enabled'] === true) {
+    refusals.push('access logging is on (Logging.Enabled is true), and this design writes no access logs');
+  } else if (logging['Enabled'] !== false) {
+    const enabled = logging['Enabled'] === undefined ? 'absent' : JSON.stringify(logging['Enabled']);
+    refusals.push(
+      `access logging cannot be read as off (Logging.Enabled is ${enabled}), and this design writes no access logs`,
+    );
+  }
+
+  // Real-time logs, the other way a distribution can send its requests somewhere,
+  // configured per behaviour. Absent and the empty string both mean none. The
+  // value is not printed: a configuration's ARN carries the account.
+  /** @type {[string, Record<string, unknown>][]} */
+  const everyBehavior = [];
+  if (defaultBehavior !== null) {
+    everyBehavior.push(['the default behaviour', defaultBehavior]);
+  }
+  for (const entry of behaviors) {
+    everyBehavior.push([`the ${JSON.stringify(entry['PathPattern'])} behaviour`, entry]);
+  }
+  for (const [label, behavior] of everyBehavior) {
+    const realtime = behavior['RealtimeLogConfigArn'];
+    if (realtime !== undefined && realtime !== '') {
+      refusals.push(`${label} carries a real-time log configuration, and this design writes no request logs`);
+    }
   }
 
   // The error statuses: all eleven, none cached, none answered with a document.
@@ -463,6 +528,9 @@ function conformingDocuments() {
         Quantity: 1,
         Items: [{ PathPattern: '/assets/*', TargetOriginId: 'viewer-origin', ResponseHeadersPolicyId: 'policy-assets' }],
       },
+      // What the control plane answers with for a distribution that writes no
+      // access logs: the object is there, switched off, with empty fields.
+      Logging: { Enabled: false, IncludeCookies: false, Bucket: '', Prefix: '' },
       // The empty strings are the service's own spelling of an unset field, not a
       // stand-in for one: the template sets neither of these, and this is what
       // the control plane answers with for an entry that passes the status
@@ -644,6 +712,76 @@ function selfTest() {
       expect: 'no behaviour is bound to /assets/*',
     },
     {
+      name: 'access logging is switched on',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        c['Logging'] = { Enabled: true, IncludeCookies: false, Bucket: 'a-log-bucket', Prefix: '' };
+      },
+      expect: 'access logging is on',
+    },
+    {
+      name: 'the logging setting is absent',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        delete c['Logging'];
+      },
+      expect: 'access logging cannot be read as off',
+    },
+    {
+      name: 'the logging setting is not an object',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        c['Logging'] = false;
+      },
+      expect: 'access logging cannot be read as off',
+    },
+    {
+      name: 'a logging setting that is a string is named by its type',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        c['Logging'] = 'synthetic-log-bucket-7f3a';
+      },
+      expect: 'Logging is a string, so access logging cannot be read as off',
+    },
+    {
+      name: 'a logging setting with nothing in it cannot be read as off',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        c['Logging'] = {};
+      },
+      expect: 'access logging cannot be read as off (Logging.Enabled is absent)',
+    },
+    {
+      name: 'a logging setting whose Enabled is the string false cannot be read as off',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        c['Logging'] = { Enabled: 'false', IncludeCookies: false, Bucket: '', Prefix: '' };
+      },
+      expect: 'access logging cannot be read as off (Logging.Enabled is "false")',
+    },
+    {
+      name: 'the default behaviour sends real-time logs',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        const behavior = /** @type {Record<string, unknown>} */ (c['DefaultCacheBehavior']);
+        behavior['RealtimeLogConfigArn'] = 'a-realtime-log-config';
+      },
+      expect: 'the default behaviour carries a real-time log configuration',
+    },
+    {
+      name: 'the asset behaviour sends real-time logs',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        const block = /** @type {Record<string, unknown>} */ (c['CacheBehaviors']);
+        const list = /** @type {Record<string, unknown>[]} */ (block['Items']);
+        const entry = list[0];
+        if (entry !== undefined) {
+          entry['RealtimeLogConfigArn'] = 'a-realtime-log-config';
+        }
+      },
+      expect: 'the "/assets/*" behaviour carries a real-time log configuration',
+    },
+    {
       name: 'the alarm is absent',
       mutate: (d) => {
         d.alarms['MetricAlarms'] = [];
@@ -796,6 +934,68 @@ function selfTest() {
     }
   }
 
+  // A Logging that is not an object is named by its type, and its value is not
+  // printed: the string case above carries a value that no refusal may repeat.
+  {
+    const docs = conformingDocuments();
+    const c = /** @type {Record<string, unknown>} */ (docs.distribution['DistributionConfig']);
+    c['Logging'] = 'synthetic-log-bucket-7f3a';
+    const refusals = assertDistribution({
+      stacks: docs.stacks,
+      distribution: docs.distribution,
+      alarms: docs.alarms,
+      expectedAlarmAction: 'topic-under-test',
+      expectedThreshold: 10000,
+    });
+    if (refusals.length > 0 && refusals.every((line) => !line.includes('synthetic-log-bucket-7f3a'))) {
+      process.stdout.write('  ok   a logging setting that is not an object is never printed\n');
+    } else {
+      failures += 1;
+      process.stdout.write(`  FAIL a logging setting that is not an object is never printed — ${JSON.stringify(refusals)}\n`);
+    }
+  }
+
+  // Spellings the service uses for "none" that must still conform. An empty
+  // real-time log configuration on a behaviour is no configuration.
+  /** @type {{name: string, mutate: (docs: ReturnType<typeof conformingDocuments>) => void}[]} */
+  const conforming = [
+    {
+      name: 'an empty real-time log configuration on both behaviours raises nothing',
+      mutate: (d) => {
+        const c = /** @type {Record<string, unknown>} */ (d.distribution['DistributionConfig']);
+        const behavior = /** @type {Record<string, unknown>} */ (c['DefaultCacheBehavior']);
+        behavior['RealtimeLogConfigArn'] = '';
+        const block = /** @type {Record<string, unknown>} */ (c['CacheBehaviors']);
+        const list = /** @type {Record<string, unknown>[]} */ (block['Items']);
+        const entry = list[0];
+        if (entry !== undefined) {
+          entry['RealtimeLogConfigArn'] = '';
+        }
+      },
+    },
+  ];
+
+  for (const testCase of conforming) {
+    const docs = conformingDocuments();
+    testCase.mutate(docs);
+    const refusals = assertDistribution({
+      stacks: docs.stacks,
+      distribution: docs.distribution,
+      alarms: docs.alarms,
+      expectedAlarmAction: 'topic-under-test',
+      expectedThreshold: 10000,
+    });
+    if (refusals.length === 0) {
+      process.stdout.write(`  ok   ${testCase.name}\n`);
+    } else {
+      failures += 1;
+      process.stdout.write(`  FAIL ${testCase.name} — it raised ${refusals.length}:\n`);
+      for (const line of refusals) {
+        process.stdout.write(`         ${line}\n`);
+      }
+    }
+  }
+
   // A missing expectation is a refusal rather than a softer check. Both of these
   // used to be the shape of a passing run.
   /** @type {{label: string, action: string | null, threshold: number | null, expect: string}[]} */
@@ -854,7 +1054,7 @@ function selfTest() {
   }
 
   if (failures === 0) {
-    process.stdout.write(`assert-distribution self-test — PASS (${cases.length + missing.length + 2} case(s))\n`);
+    process.stdout.write(`assert-distribution self-test — PASS (${cases.length + conforming.length + missing.length + 3} case(s))\n`);
     return 0;
   }
   process.stdout.write(`assert-distribution self-test — FAIL (${failures} case(s))\n`);

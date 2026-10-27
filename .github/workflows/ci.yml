@@ -98,6 +98,9 @@ jobs:
       - name: Check that no private value appears in a public file
         run: node scripts/infra/scan-private-values.mjs
 
+      - name: Run the private-value scan's own self-test
+        run: node scripts/infra/scan-private-values.mjs --self-test
+
       - name: Check the account assertion
         run: sh scripts/infra/selftest/assert-account.selftest.sh
 
