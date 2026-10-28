@@ -21,7 +21,9 @@
  * allowed to break. At those sizes the code field is also required to show the
  * whole of a typed code, at least as large as the text around it, and the
  * control, the name and the line that opens the surface to break only between
- * words. So the space at the sides of the page, the card, the field and the
+ * words wherever a word fits its line; a word wider than the whole of its line
+ * may break, since only smaller text or sideways scrolling would keep it whole.
+ * So the space at the sides of the page, the card, the field and the
  * control stops growing once it would take more than a small share of the
  * width, the field's digits, the name and that line come down towards the size
  * of the text around them (never below it) where their larger size would not
@@ -192,11 +194,20 @@ svg {
   font-size: 0.9375rem;
 }
 
+/*
+ * The field's side padding gives way to the code: it is at most half of what
+ * the field's width leaves once a code of nine characters (eight numbers and a
+ * space, each taken as wide as a digit) and the borders are taken out of it.
+ * That limit is reached only where the text is large for the width, and there
+ * it keeps the whole of a typed code in view in a face whose digits are wider
+ * than the system's own. It stops giving way at 4px, and at the default text
+ * size, from the narrow width up, the padding is as designed.
+ */
 #code-input {
   width: 100%;
   min-width: 0;
   min-height: 3.25rem;
-  padding: 0.5rem min(0.875rem, 4.375vw);
+  padding: 0.5rem max(4px, min(0.875rem, 4.375vw, calc((100% - 9ch) / 2 - 2px)));
   border: 2px solid #7f8a86;
   border-radius: 12px;
   background: #ffffff;

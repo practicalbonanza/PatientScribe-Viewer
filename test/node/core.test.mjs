@@ -1519,7 +1519,7 @@ test('the stylesheet the viewer ships is the stylesheet that was reviewed', () =
   const stylesheet = readFileSync(fileURLToPath(new URL('../../site/css/viewer.css', import.meta.url)));
   assert.equal(
     createHash('sha256').update(stylesheet).digest('hex'),
-    'e0a22a0609b23389ace2409326c0a2dfbf0191d0ce8f44c61e738c9b86121238',
+    'aa178c968e9682ed35df654d6155028bed289b90b1ee7345ce3336e62c53e3f0',
     'the served stylesheet is not the one this pin was computed from — if the change was deliberate, ' +
       'the new value goes here in the same change that makes it',
   );
