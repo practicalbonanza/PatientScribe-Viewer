@@ -3,7 +3,10 @@
  *
  * First-party only, and it stays that way: no imported fonts, no remote
  * stylesheets, no remote images, and no rule that names an external resource at
- * all. Every family below is one the device already has.
+ * all. Every family below is one the device already has. The drawings on the
+ * page (the mark beside the name, the small icons, the drawing on the page every
+ * failure ends on) are written into `index.html` as inline SVG and take every
+ * colour they have from the classes here, so this file holds the whole palette.
  *
  * Two properties of this file are checked rather than described. Every text
  * colour is required to reach the contrast the accessibility guidelines ask for
@@ -15,7 +18,15 @@
  * size and at the narrow width with double it, which is why nothing here is
  * given a fixed width, why the control that sends a code may shrink and wrap
  * its words rather than hold them on one line, and why long unbroken text is
- * allowed to break.
+ * allowed to break. At those sizes the code field is also required to show the
+ * whole of a typed code, at least as large as the text around it, and the
+ * control, the name and the line that opens the surface to break only between
+ * words. So the space at the sides of the page, the card, the field and the
+ * control stops growing once it would take more than a small share of the
+ * width, the field's digits, the name and that line come down towards the size
+ * of the text around them (never below it) where their larger size would not
+ * fit, the spacing between the digits gives way first, and the name moves under
+ * its mark rather than break.
  *
  * `color-scheme` is declared so that a device in a dark theme is handed a page
  * that is deliberately light rather than one the browser has inverted on its
@@ -33,13 +44,14 @@ html {
   color-scheme: light;
 }
 
+/* The page's background is also the browser bar's colour, named in the page's theme-color. */
 body {
   margin: 0;
-  background: #ffffff;
-  color: #1c1c1c;
+  background: #faf6ee;
+  color: #26292b;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   font-size: 1rem;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 [hidden] {
@@ -49,7 +61,7 @@ body {
 #viewer-root {
   max-width: 40rem;
   margin: 0 auto;
-  padding: 1.25rem 1rem 2.5rem;
+  padding: 1.25rem min(1rem, 5vw) 2.5rem;
 }
 
 /* Long words and pasted identifiers break rather than widening the page. */
@@ -60,115 +72,319 @@ body {
   word-break: break-word;
 }
 
-#brand {
-  margin: 0 0 1rem;
-  font-size: 1.25rem;
-  line-height: 1.3;
-  letter-spacing: 0.01em;
-}
-
 p {
   margin: 0 0 0.75rem;
 }
 
 a {
-  color: #0f4c9c;
+  color: #0f6b5c;
+  text-underline-offset: 0.15em;
+}
+
+:focus-visible {
+  outline: 3px solid #0f6b5c;
+  outline-offset: 2px;
+}
+
+/* The drawings: hidden from assistive technology in the page, coloured here. */
+svg {
+  flex: 0 0 auto;
+}
+
+.icon {
+  width: 1.25em;
+  height: 1.25em;
+  margin-top: 0.15em;
+}
+
+.icon g,
+.icon path {
+  stroke: currentColor;
+}
+
+/* The name, with the mark beside it. */
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.625rem;
+  margin: 0 0 1.25rem;
+}
+
+.mark {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+.mark-tile {
+  fill: #157f6e;
+}
+
+.mark-ink {
+  stroke: #f5f0e6;
+}
+
+#brand {
+  margin: 0;
+  font-size: max(1rem, min(1.25rem, 13vw));
+  line-height: 1.25;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+}
+
+/* One white card for each step. */
+#shell,
+#unavailable,
+#note {
+  border: 1px solid #ebe3d3;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(60, 48, 20, 0.05), 0 6px 18px rgba(60, 48, 20, 0.06);
+}
+
+#shell,
+#note {
+  padding: 1.25rem min(1.125rem, 5.625vw) 1rem;
 }
 
 /* The advisory: present, plainly, and never in the way of the code field. */
 #advisory {
-  margin: 0 0 1.25rem;
-  padding: 0.75rem 0.875rem;
-  border-left: 4px solid #8a5a00;
-  background: #fdf6e6;
-  color: #1c1c1c;
+  display: flex;
+  gap: 0.625rem;
+  margin: 0 0 1rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid #ecd7a8;
+  border-radius: 12px;
+  background: #fbf1dc;
+  color: #26292b;
+}
+
+#advisory .icon {
+  color: #8a5a00;
+}
+
+/* The code-entry surface. */
+#shell-intro {
+  margin-bottom: 0.5rem;
+  font-size: max(1rem, min(1.1875rem, 12vw));
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+#code-helper {
+  color: #575b5e;
 }
 
 #code-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 1rem 0 0.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.625rem;
+  margin: 1.125rem 0 0.5rem;
 }
 
 #code-label {
-  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+#code-hint {
+  margin: -0.375rem 0 0;
+  color: #575b5e;
+  font-size: 0.9375rem;
 }
 
 #code-input {
-  flex: 1 1 8rem;
+  width: 100%;
   min-width: 0;
-  padding: 0.5rem 0.625rem;
-  border: 1px solid #6b7280;
-  border-radius: 6px;
+  min-height: 3.25rem;
+  padding: 0.5rem min(0.875rem, 4.375vw);
+  border: 2px solid #7f8a86;
+  border-radius: 12px;
   background: #ffffff;
-  color: #1c1c1c;
+  color: #26292b;
   font: inherit;
+  font-size: max(1rem, min(1.5rem, 7.5vw));
+  letter-spacing: max(0px, min(0.14em, calc(7vw - 1rem)));
+  font-variant-numeric: tabular-nums;
 }
 
 /* The control shrinks, and wraps its words, rather than widen the row past the page. */
 #code-submit {
-  flex: 0 1 auto;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
+  min-height: 3.25rem;
   white-space: normal;
-  padding: 0.5rem 1rem;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: #0f4c9c;
+  padding: 0.625rem min(1rem, 5vw);
+  border: 0;
+  border-radius: 12px;
+  background: #157f6e;
   color: #ffffff;
   font: inherit;
+  font-size: 1.0625rem;
+  font-weight: 650;
   cursor: pointer;
 }
 
+/*
+ * While a code is being checked: a band sweeps across the control. The band
+ * darkens rather than lightens, because white text on this colour is only just
+ * above the contrast it needs, and a lighter band would take it below. It does
+ * not move at all for anyone who has asked for less motion.
+ */
 #code-submit:disabled {
-  background: #5b6472;
   cursor: default;
+  background: #3d7d72 linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.18) 50%, transparent 100%) no-repeat;
+  background-size: 40% 100%;
+  animation: checking 1.2s ease-in-out infinite;
 }
 
+@keyframes checking {
+  from {
+    background-position: -60% 0;
+  }
+  to {
+    background-position: 160% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #code-submit:disabled {
+    animation: none;
+    background-image: none;
+  }
+}
+
+/*
+ * A code that did not match: the line in a warm dark orange, and the field's
+ * border in the same family. The border reads what the status region holds,
+ * so it needs nothing from the renderer; a browser without `:has()` keeps the
+ * field's usual border and loses nothing else.
+ */
 #wrong-code {
-  margin: 0 0 0.75rem;
-  color: #8a1c1c;
+  margin: 0 0 0.25rem;
+  color: #9a3f10;
+  font-weight: 600;
+}
+
+#wrong-code:empty {
+  margin: 0;
+}
+
+#shell:has(#wrong-code:not(:empty)) #code-input {
+  border-color: #b5521b;
+}
+
+/*
+ * The one page every failure ends on. The drawing sits after the line in the
+ * page and is laid over the top of the line's card here, and it is shown only
+ * beside a line that is not hidden.
+ */
+.ended {
+  display: grid;
+}
+
+.ended > * {
+  grid-area: 1 / 1;
 }
 
 #unavailable {
-  margin: 0 0 1.5rem;
+  margin: 0;
+  padding: 8.75rem 1.25rem 1.5rem;
+  font-size: 1.125rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.ended-art {
+  display: none;
+  width: 7.5rem;
+  max-width: 100%;
+  height: 6rem;
+  margin: 1.75rem auto 0;
+  pointer-events: none;
+}
+
+#unavailable:not([hidden]) + .ended-art {
+  display: block;
+}
+
+.art-paper {
+  stroke: #9fc3bb;
+  fill: #f3f8f7;
+}
+
+.art-line {
+  stroke: #9fc3bb;
+}
+
+.art-badge {
+  stroke: #157f6e;
+  fill: #ffffff;
+}
+
+.art-hand {
+  stroke: #157f6e;
 }
 
 /* The decrypted note. */
-#banner {
-  margin: 0 0 0.875rem;
-  padding: 0.75rem 0.875rem;
-  border-radius: 6px;
-  background: #eef2f8;
-  color: #1c1c1c;
+.banner {
+  display: flex;
+  gap: 0.625rem;
+  margin: 0 0 1rem;
+  padding: 0.875rem 1rem;
+  border-radius: 12px;
+  background: #eaf3f0;
+  color: #26292b;
+  font-size: 0.9375rem;
+}
+
+.banner .icon {
+  color: #0f6b5c;
 }
 
 #you-chip,
 #edited-chip {
-  margin: 0 0 0.375rem;
-  color: #3f3f46;
-  font-size: 0.9375rem;
-}
-
-#visit-date,
-#topic {
-  margin: 0 0 0.375rem;
-}
-
-#topic {
+  display: inline-block;
+  margin: 0 0.375rem 1rem 0;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: #e3efec;
+  color: #0d5a4e;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
+#visit-date {
+  margin: 0 0 0.25rem;
+  color: #575b5e;
+  font-size: 0.9375rem;
+}
+
+#topic {
+  margin: 0 0 1rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid #ebe3d3;
+  font-size: 1.375rem;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
 #note-body {
-  margin: 1rem 0 1.25rem;
+  margin: 0;
+  font-size: 1.0625rem;
+  line-height: 1.6;
 }
 
 #note-body h2 {
-  margin: 1.25rem 0 0.5rem;
+  margin: 1.375rem 0 0.5rem;
+  color: #0f6b5c;
   font-size: 1.0625rem;
   line-height: 1.35;
+  font-weight: 700;
+}
+
+#note-body h2:first-child {
+  margin-top: 0.25rem;
 }
 
 #note-body ul {
@@ -177,47 +393,109 @@ a {
 }
 
 #note-body li {
-  margin: 0 0 0.375rem;
+  margin: 0 0 0.5rem;
+  padding-left: 0.125rem;
 }
 
-#expiry,
+#note-body li::marker {
+  color: #157f6e;
+}
+
+.expiry {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1.25rem 0 0.75rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 12px;
+  background: #f4f0e8;
+  color: #26292b;
+  font-size: 0.9375rem;
+}
+
+.expiry .icon {
+  color: #0f6b5c;
+}
+
+.translate-line {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  color: #575b5e;
+  font-size: 0.875rem;
+}
+
 #get-app {
-  margin: 0 0 0.5rem;
-  color: #3f3f46;
+  margin: 0;
   font-size: 0.9375rem;
 }
 
 /* The footer: the notice, and the report control where there is one. */
 #footer {
-  margin-top: 2rem;
-  padding-top: 1rem;
-  border-top: 1px solid #c7ccd4;
-  color: #3f3f46;
+  margin-top: 1.75rem;
+  color: #575b5e;
   font-size: 0.9375rem;
 }
 
-#notice-summary {
+#notice {
+  padding-top: 0.875rem;
+  border-top: 1px solid #e2d9c7;
+}
+
+.notice-toggle {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  color: #26292b;
+  font-weight: 600;
   cursor: pointer;
 }
 
+.notice-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.notice-toggle .icon {
+  color: #0f6b5c;
+}
+
+.chevron {
+  width: 1.25em;
+  height: 1.25em;
+  margin-left: auto;
+  stroke: #0f6b5c;
+  transition: transform 0.2s ease;
+}
+
+#notice[open] .chevron {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+
 #notice-body {
-  margin: 0.625rem 0 0;
+  margin: 0.75rem 0 0;
+  line-height: 1.6;
 }
 
 #report {
-  margin-top: 0.875rem;
-  padding: 0;
+  margin-top: 1rem;
+  padding: 0.25rem 0;
   border: 0;
   background: none;
-  color: #0f4c9c;
+  color: #0f6b5c;
   font: inherit;
   text-align: left;
   text-decoration: underline;
+  text-underline-offset: 0.15em;
   cursor: pointer;
 }
 
 #report:disabled {
-  color: #3f3f46;
+  color: #575b5e;
   text-decoration: none;
   cursor: default;
 }

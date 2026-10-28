@@ -273,6 +273,7 @@ export const SUITES = Object.freeze({
         'the viewer never re-serialises anything',
         'the copy the viewer ships is the copy that was agreed',
         'the stylesheet the viewer ships is the stylesheet that was reviewed',
+        'the tab icon is the picture that was reviewed, and carries nothing but the picture',
         'the expiry formatter writes one pattern, in whatever timezone the reader is in',
         'the encoder and the strict decoder are inverses',
         'the capability probe the viewer ships is the one the generator published',

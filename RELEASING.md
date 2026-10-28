@@ -38,7 +38,8 @@ materialised from the PUBLIC tip, so a release that has not been pushed has noth
 ```
 /index.html                     the entry document, no-store, both aliases
 /js/config.js                   the committed origin table, no-store
-/assets/<sha256>.<ext>          everything else, immutable for a year
+/assets/<sha256>.js|.css        every other module, and the stylesheet, immutable for a year
+/assets/<sha256>.png            the tab icon, and any other PNG, immutable for a year
 ```
 
 Everything under `/assets/` is named by the digest of its own bytes. That is what makes a year-long
@@ -59,9 +60,12 @@ immediately after the closing tag. That comment is how a served origin answers "
 in a form a browser ignores and a person can read, and the check reads it under a grammar strict enough
 that a comment which is nearly one is not one.
 
-The layout is exactly those three classes. An object of any other class — an image, a font, a document
-that is not the entry point — refuses the build rather than being placed somewhere by a rule nobody has
-written down.
+The layout is exactly those four classes, and a PNG is the one image among them: the entry document links
+it as its tab icon, exactly once, and the build rewrites that link to the icon's digest path the way it
+rewrites the stylesheet's. A PNG nothing links is still built into `/assets/`, as a module or a
+stylesheet nothing names is, and a file named `.png` that does not begin with the PNG signature refuses
+the build. An object of any other class — an image of another kind, a font, a document that is not the
+entry point — refuses the build rather than being placed somewhere by a rule nobody has written down.
 
 ## The switch
 

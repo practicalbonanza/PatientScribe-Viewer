@@ -348,6 +348,7 @@ test('each suite is where the runner looks for it, and holds what it is built fr
       'the self suite is required to run every check that is about another check, by title',
       'the stored key is watched, in every spelling the other secrets get',
       'the stylesheet the viewer ships is the stylesheet that was reviewed',
+      'the tab icon is the picture that was reviewed, and carries nothing but the picture',
       'the viewer never re-serialises anything',
       'two cases with one name are a failure',
       'what the driver is handed carries no expectations',

@@ -55,6 +55,9 @@ const ENTRY_POINT = 'js/main.js';
 /** The one stylesheet the page names. */
 const STYLESHEET = 'css/viewer.css';
 
+/** The one icon the page names, which a browser shows in its tab. */
+const ICON = 'icon.png';
+
 /** The id of the element the entry point resolves, spelled here as the page spells it. */
 const ROOT_ID = 'viewer-root';
 
@@ -145,10 +148,32 @@ const SAFE_PREFIX = [
 ].join('\n');
 
 /**
+ * What every drawing in the page carries: hidden from assistive technology, and
+ * out of the focus order. Spread into each drawing's entry below rather than
+ * written out eight times, and still compared whole, attribute by attribute.
+ */
+const HIDDEN_DRAWING = Object.freeze({ 'aria-hidden': 'true', focusable: 'false' });
+
+/**
+ * The size the small icons are drawn at when nothing else sizes them, written
+ * once for the same reason. The stylesheet sizes every drawing; these are what a
+ * page without it falls back to, rather than a drawing as wide as the page.
+ */
+const ICON_SIZE = Object.freeze({ width: '20', height: '20' });
+
+/** The strokes the small icons are drawn with, written once for the same reason. */
+const ICON_STROKES = Object.freeze({
+  fill: 'none',
+  'stroke-width': '1.8',
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+});
+
+/**
  * Every element the served page carries once the flow has run on it, in document
  * order, with every attribute each one has.
  *
- * The page is forty-two elements long, so what it is made of is written down
+ * The page is ninety-three elements long, so what it is made of is written down
  * rather than described. That is what makes the assertions about links and
  * scripts below into a statement about the page's whole fetching surface instead
  * of a statement about two element names: an `<img>`, an `<iframe>`, a `<video>`
@@ -164,17 +189,18 @@ const SAFE_PREFIX = [
  * element does: an inline `style` naming a resource on the `<html>` element that
  * has always been here puts a file in the request list with the tag list
  * unchanged, and so does a `background`, a `formaction`, or an `src` moved onto
- * something that did not have one. Two of these elements are `meta` tags
+ * something that did not have one. Four of these elements are `meta` tags
  * carrying nothing but a name, and a name is one word from
  * `http-equiv="refresh"`, which navigates. So each element is required to carry
  * exactly the attributes it carries, by name and by value.
  *
- * The destinations this page names are here as well, all of them: three `href`
- * attributes — the stylesheet and the two links that leave the page — and the
- * one `src`, which is the entry point. They are in the markup rather than in any
- * module, and that is the point of them: a destination written into the page is
- * a destination no code assigns. Reading them here is what makes that checkable
- * from outside the files that would have to be edited to change it.
+ * The destinations this page names are here as well, all of them: four `href`
+ * attributes — the tab icon, the stylesheet and the two links that leave the
+ * page — and the one `src`, which is the entry point. They are in the markup
+ * rather than in any module, and that is the point of them: a destination
+ * written into the page is a destination no code assigns. Reading them here is
+ * what makes that checkable from outside the files that would have to be
+ * edited to change it.
  *
  * This is the live tree rather than the file on disk, and the difference is the
  * `hidden` attributes. The page is served with every state section hidden; what
@@ -239,38 +265,89 @@ const PAGE_ELEMENTS = [
   { tag: 'meta', attributes: { charset: 'utf-8' } },
   { tag: 'meta', attributes: { 'http-equiv': 'Content-Security-Policy', content: POLICY } },
   { tag: 'meta', attributes: { name: 'viewport', content: 'width=device-width, initial-scale=1' } },
+  { tag: 'meta', attributes: { name: 'google', content: 'notranslate' } },
+  { tag: 'meta', attributes: { name: 'theme-color', content: '#faf6ee' } },
+  { tag: 'link', attributes: { rel: 'icon', type: 'image/png', href: ICON } },
   { tag: 'title', attributes: {} },
   { tag: 'link', attributes: { rel: 'stylesheet', href: STYLESHEET } },
   { tag: 'script', attributes: { type: 'module', src: ENTRY_POINT } },
   { tag: 'body', attributes: {} },
   { tag: 'main', attributes: { id: ROOT_ID } },
+  { tag: 'div', attributes: { class: 'masthead' } },
+  { tag: 'svg', attributes: { ...HIDDEN_DRAWING, class: 'mark', viewBox: '0 0 64 64', width: '36', height: '36' } },
+  { tag: 'rect', attributes: { class: 'mark-tile', width: '64', height: '64', rx: '14' } },
+  { tag: 'g', attributes: { class: 'mark-ink', fill: 'none', 'stroke-width': '2.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' } },
+  { tag: 'path', attributes: { d: 'M17 10H28A8 8 0 0 1 36 18V25A8 8 0 0 1 28 33H24.5L17.5 40.5L20.3 33H17A8 8 0 0 1 9 25V18A8 8 0 0 1 17 10Z' } },
+  { tag: 'polyline', attributes: { points: '14.7,22.2 18.8,22.2 20.9,18.4 22.8,26.9 24.7,22.2 28.7,22.2' } },
+  { tag: 'path', attributes: { d: 'M32.5 53.5L33.6 46L46.6 25.6L52 29.1L39 49.4Z' } },
+  { tag: 'line', attributes: { x1: '44.6', y1: '28.6', x2: '50', y2: '32.1' } },
+  { tag: 'line', attributes: { x1: '33.6', y1: '46', x2: '39', y2: '49.4' } },
   { tag: 'h1', attributes: { id: 'brand' } },
   { tag: 'p', attributes: { id: 'advisory', hidden: '' } },
+  { tag: 'svg', attributes: { ...HIDDEN_DRAWING, ...ICON_SIZE, class: 'icon', viewBox: '0 0 24 24' } },
+  { tag: 'g', attributes: { ...ICON_STROKES } },
+  { tag: 'circle', attributes: { cx: '12', cy: '12', r: '8.5' } },
+  { tag: 'path', attributes: { d: 'M12 11v5' } },
+  { tag: 'path', attributes: { d: 'M12 8h.01' } },
+  { tag: 'span', attributes: {} },
   { tag: 'span', attributes: { id: 'advisory-lead' } },
   { tag: 'strong', attributes: { id: 'advisory-emphasis' } },
   { tag: 'span', attributes: { id: 'advisory-tail' } },
   { tag: 'section', attributes: { id: 'shell', hidden: '' } },
   { tag: 'p', attributes: { id: 'shell-intro' } },
   { tag: 'p', attributes: { id: 'code-helper' } },
-  { tag: 'p', attributes: { id: 'code-row' } },
+  { tag: 'div', attributes: { id: 'code-row' } },
   { tag: 'label', attributes: { id: 'code-label', for: 'code-input' } },
-  { tag: 'input', attributes: { id: 'code-input', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocapitalize: 'none', autocorrect: 'off' } },
+  { tag: 'p', attributes: { id: 'code-hint' } },
+  { tag: 'input', attributes: { id: 'code-input', type: 'text', inputmode: 'numeric', pattern: '[0-9]*', autocapitalize: 'none', autocorrect: 'off', 'aria-describedby': 'code-hint' } },
   { tag: 'button', attributes: { id: 'code-submit', type: 'button' } },
   { tag: 'p', attributes: { id: 'wrong-code', role: 'status' } },
+  { tag: 'div', attributes: { class: 'ended' } },
   { tag: 'p', attributes: { id: 'unavailable' } },
+  { tag: 'svg', attributes: { ...HIDDEN_DRAWING, class: 'ended-art', viewBox: '0 0 120 96', width: '120', height: '96' } },
+  { tag: 'g', attributes: { fill: 'none', 'stroke-width': '3', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' } },
+  { tag: 'rect', attributes: { class: 'art-paper', x: '30', y: '14', width: '60', height: '72', rx: '8' } },
+  { tag: 'path', attributes: { class: 'art-line', d: 'M42 34h36M42 46h36M42 58h22' } },
+  { tag: 'circle', attributes: { class: 'art-badge', cx: '84', cy: '74', r: '15' } },
+  { tag: 'path', attributes: { class: 'art-hand', d: 'M84 66v9l5 3' } },
   { tag: 'section', attributes: { id: 'note', hidden: '' } },
-  { tag: 'p', attributes: { id: 'banner' } },
+  { tag: 'p', attributes: { class: 'banner' } },
+  { tag: 'svg', attributes: { ...HIDDEN_DRAWING, ...ICON_SIZE, class: 'icon', viewBox: '0 0 24 24' } },
+  { tag: 'g', attributes: { ...ICON_STROKES } },
+  { tag: 'circle', attributes: { cx: '12', cy: '12', r: '8.5' } },
+  { tag: 'path', attributes: { d: 'M12 11v5' } },
+  { tag: 'path', attributes: { d: 'M12 8h.01' } },
+  { tag: 'span', attributes: { id: 'banner' } },
   { tag: 'p', attributes: { id: 'you-chip', hidden: '' } },
   { tag: 'p', attributes: { id: 'edited-chip', hidden: '' } },
   { tag: 'p', attributes: { id: 'visit-date' } },
   { tag: 'p', attributes: { id: 'topic' } },
   { tag: 'div', attributes: { id: 'note-body' } },
-  { tag: 'p', attributes: { id: 'expiry' } },
+  { tag: 'p', attributes: { class: 'expiry' } },
+  { tag: 'svg', attributes: { ...HIDDEN_DRAWING, ...ICON_SIZE, class: 'icon', viewBox: '0 0 24 24' } },
+  { tag: 'g', attributes: { ...ICON_STROKES } },
+  { tag: 'circle', attributes: { cx: '12', cy: '12', r: '8.5' } },
+  { tag: 'path', attributes: { d: 'M12 7.5V12l3 2' } },
+  { tag: 'span', attributes: { id: 'expiry' } },
+  { tag: 'p', attributes: { class: 'translate-line' } },
+  { tag: 'svg', attributes: { ...HIDDEN_DRAWING, ...ICON_SIZE, class: 'icon', viewBox: '0 0 24 24' } },
+  { tag: 'g', attributes: { ...ICON_STROKES } },
+  { tag: 'circle', attributes: { cx: '12', cy: '12', r: '8.5' } },
+  { tag: 'path', attributes: { d: 'M3.5 12h17' } },
+  { tag: 'path', attributes: { d: 'M12 3.5c2.4 2.4 3.5 5.3 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.3-3.5-8.5s1.1-6.1 3.5-8.5z' } },
+  { tag: 'span', attributes: { id: 'translate-note' } },
   { tag: 'p', attributes: { id: 'get-app' } },
   { tag: 'a', attributes: { id: 'app-link', href: 'https://apps.apple.com/au/app/id6758035505' } },
   { tag: 'footer', attributes: { id: 'footer' } },
   { tag: 'details', attributes: { id: 'notice' } },
-  { tag: 'summary', attributes: { id: 'notice-summary' } },
+  { tag: 'summary', attributes: { class: 'notice-toggle' } },
+  { tag: 'svg', attributes: { ...HIDDEN_DRAWING, ...ICON_SIZE, class: 'icon', viewBox: '0 0 24 24' } },
+  { tag: 'g', attributes: { ...ICON_STROKES } },
+  { tag: 'path', attributes: { d: 'M12 3.5l7 2.8v5.2c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6.3z' } },
+  { tag: 'path', attributes: { d: 'M9 12l2.2 2.2L15.5 10' } },
+  { tag: 'span', attributes: { id: 'notice-summary' } },
+  { tag: 'svg', attributes: { ...HIDDEN_DRAWING, ...ICON_SIZE, class: 'chevron', viewBox: '0 0 24 24' } },
+  { tag: 'path', attributes: { d: 'M6 9l6 6 6-6', fill: 'none', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' } },
   { tag: 'p', attributes: { id: 'notice-body' } },
   { tag: 'span', attributes: { id: 'notice-lead' } },
   { tag: 'a', attributes: { id: 'policy-link', href: 'https://patientscribe.com.au/privacy-policy' } },
@@ -482,15 +559,16 @@ test('the page is served and its module graph runs without error', async ({ page
   // does not match `rel="preload modulepreload"`; `prefetch` fetches too; and a
   // script that is not a module can fetch whatever it likes without appearing in
   // the entry-point read above. What the page carries is short enough to write
-  // down, so it is written down: of the elements that fetch, one stylesheet link
-  // and one module script and nothing else — and, in the read after these two,
-  // that those are the only elements of either kind the page has at all. Adding
-  // either is then an edit here rather than a silent change to what the page
-  // loads.
+  // down, so it is written down: of the elements that fetch, one icon link, one
+  // stylesheet link and one module script and nothing else — and, in the read
+  // after these two, that those are the only elements of either kind the page
+  // has at all. Adding either is then an edit here rather than a silent change
+  // to what the page loads.
   const links = await page
     .locator('link')
     .evaluateAll((nodes) => nodes.map((node) => ({ rel: node.getAttribute('rel'), href: node.getAttribute('href') })));
   expect(links, 'the served page carries a link element it did not before').toEqual([
+    { rel: 'icon', href: ICON },
     { rel: 'stylesheet', href: STYLESHEET },
   ]);
 
@@ -517,7 +595,7 @@ test('the page is served and its module graph runs without error', async ({ page
   // Written as the elements the page has rather than as the element names it may
   // not have, for the reason every other whole-list read here is written that
   // way: a list of what is forbidden is a list somebody has to keep finishing,
-  // and the platform keeps adding to it. This page is forty-two elements long,
+  // and the platform keeps adding to it. This page is ninety-three elements long,
   // which is short enough to write down.
   //
   // And every attribute on each of them, which is the half a tag list cannot

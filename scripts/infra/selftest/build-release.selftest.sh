@@ -140,6 +140,28 @@ else
   record fail 'the stylesheet and the module are rewritten to their digest paths' "$(head -12 "$ONE/layout/index.html")"
 fi
 
+# The tab icon: one PNG in the release, served by its digest, and the one link
+# that names it rewritten to that path. The digest is taken by node, which every
+# run of this already has, rather than by a tool one platform has and another
+# does not.
+digest_of() {
+  node -e 'process.stdout.write(require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(process.argv[1])).digest("hex"))' "$1"
+}
+ICONS=$(grep -c '"/assets/[0-9a-f]\{64\}\.png"' "$ONE/manifest.json" || true)
+ICON_PATH=$(grep -o '/assets/[0-9a-f]\{64\}\.png' "$ONE/manifest.json" | head -1)
+if [ "$ICONS" -eq 1 ] && [ -f "$ONE/layout$ICON_PATH" ] &&
+  [ "/assets/$(digest_of "$ROOT/site/icon.png").png" = "$ICON_PATH" ]; then
+  record ok 'the real site/ carries exactly one icon, served at the digest of its own bytes'
+else
+  record fail 'the real site/ carries exactly one icon, served at the digest of its own bytes' "found ${ICONS}: ${ICON_PATH}"
+fi
+if [ "$(grep -c "<link rel=\"icon\" type=\"image/png\" href=\"${ICON_PATH}\" />" "$ONE/layout/index.html" || true)" -eq 1 ] &&
+  ! grep -q 'href="icon.png"' "$ONE/layout/index.html"; then
+  record ok 'the icon link is rewritten to the icon'"'"'s digest path'
+else
+  record fail 'the icon link is rewritten to the icon'"'"'s digest path' "$(grep -n 'rel="icon"' "$ONE/layout/index.html")"
+fi
+
 if grep -q '"/js/config.js"' "$ONE/manifest.json" && ! grep -q '/assets/.*config' "$ONE/manifest.json"; then
   record ok 'the origin table is a document-prefix object and not an asset'
 else
@@ -156,12 +178,14 @@ write_fixture_tree() {
 <!doctype html>
 <html lang="en">
   <head>
+    <link rel="icon" type="image/png" href="icon.png" />
     <link rel="stylesheet" href="css/viewer.css" />
     <script type="module" src="js/main.js"></script>
   </head>
   <body></body>
 </html>
 HTML
+  cp "$ROOT/site/icon.png" "$TREE/icon.png"
   printf 'body { margin: 0; }\n' > "$TREE/css/viewer.css"
   printf 'export function apiOriginFor() {\n  return null;\n}\n' > "$TREE/js/config.js"
   printf "import { apiOriginFor } from './config.js';\nexport const started = apiOriginFor;\n" > "$TREE/js/main.js"
@@ -239,6 +263,54 @@ refuses 'a stylesheet that references another object refuses' "$WORK/tree-url" '
 write_fixture_tree "$WORK/tree-stranger"
 printf 'not a module\n' > "$WORK/tree-stranger/js/notes.txt"
 refuses 'an object of a class this layout does not serve refuses' "$WORK/tree-stranger" 'stranger'
+
+write_fixture_tree "$WORK/tree-two-icons"
+sed 's|    <link rel="icon" type="image/png" href="icon.png" />|&\
+&|' "$WORK/tree-sound/index.html" > "$WORK/tree-two-icons/index.html"
+if [ "$(grep -c 'rel="icon"' "$WORK/tree-two-icons/index.html")" -eq 2 ]; then
+  refuses 'an entry document with two icon links refuses' "$WORK/tree-two-icons" 'two-icons'
+  if grep -q 'icon link' "$WORK/out-two-icons.log"; then
+    record ok 'the two-icon refusal names the icon links'
+  else
+    record fail 'the two-icon refusal names the icon links' "$(cat "$WORK/out-two-icons.log")"
+  fi
+else
+  record fail 'an entry document with two icon links refuses' 'the fixture did not come out with two icon links'
+fi
+
+write_fixture_tree "$WORK/tree-no-icon"
+grep -v 'rel="icon"' "$WORK/tree-sound/index.html" > "$WORK/tree-no-icon/index.html"
+refuses 'an entry document with no icon link refuses' "$WORK/tree-no-icon" 'no-icon'
+
+write_fixture_tree "$WORK/tree-icon-not-png"
+sed 's|href="icon.png"|href="css/viewer.css"|' "$WORK/tree-sound/index.html" > "$WORK/tree-icon-not-png/index.html"
+refuses 'an icon link that names something other than a PNG refuses' "$WORK/tree-icon-not-png" 'icon-not-png'
+
+# A PNG the entry document does not link is an object of the release all the
+# same, as a stylesheet or a module nothing names is. And a PNG is never read as
+# text: the bytes of a parent specifier inside one refuse nothing.
+write_fixture_tree "$WORK/tree-spare-png"
+printf '\211PNG\r\n\032\n../ not read as a specifier\n' > "$WORK/tree-spare-png/css/spare.png"
+STATUS=0
+node "$BUILD" --tree "$WORK/tree-spare-png" --out "$WORK/out-spare-png" --release-id "$FIXTURE_ID" --commit "$FIXTURE_COMMIT" \
+  > "$WORK/out-spare-png.log" 2>&1 || STATUS=$?
+SPARE="/assets/$(digest_of "$WORK/tree-spare-png/css/spare.png").png"
+if [ "$STATUS" -eq 0 ] && grep -q "\"${SPARE}\"" "$WORK/out-spare-png/$FIXTURE_ID/manifest.json"; then
+  record ok 'a PNG nothing links is built as an asset, and its bytes are not read as text'
+else
+  record fail 'a PNG nothing links is built as an asset, and its bytes are not read as text' "exit ${STATUS}: $(cat "$WORK/out-spare-png.log")"
+fi
+
+# And a file named .png that is not one: a document, here, which the name alone
+# would otherwise serve as a picture. It refuses, and says why.
+write_fixture_tree "$WORK/tree-not-a-picture"
+printf '<html><script>alert(1)</script></html>\n' > "$WORK/tree-not-a-picture/js/x.png"
+refuses 'a .png that does not begin with the PNG signature refuses' "$WORK/tree-not-a-picture" 'not-a-picture'
+if grep -q 'PNG signature' "$WORK/out-not-a-picture.log"; then
+  record ok 'the refusal of a .png that is not a picture says so'
+else
+  record fail 'the refusal of a .png that is not a picture says so' "$(cat "$WORK/out-not-a-picture.log")"
+fi
 
 STATUS=0
 node "$BUILD" --tree "$WORK/tree-sound" --out "$WORK/out-suffix" --release-id "20260101T000000Z-ffffffffffff" \

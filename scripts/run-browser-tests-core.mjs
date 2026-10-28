@@ -234,6 +234,10 @@ export const REQUIRED_TESTS = Object.freeze({
     'the code-entry surface reflows at three times the text size on a phone, and at twice it at the narrow width',
     'the code field asks for a number pad, corrects nothing, and belongs to no form',
     'a second link opened while a wrong code is still typed leaves the field empty',
+    'the page asks not to be translated, and the browser bar is the colour of the page',
+    'the code field is described by the line that says how long a code is',
+    'every drawing on the page is hidden from assistive technology and names nothing',
+    'the control that sends a code stays still for anyone who has asked for less motion',
   ]),
   // The half of the release check that needs a browser. Neither of these can be
   // reached from a socket: what a browsing context is left holding after a page

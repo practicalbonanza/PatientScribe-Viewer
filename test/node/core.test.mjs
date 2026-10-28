@@ -687,15 +687,19 @@ test('the browser path is invoked through the runner that fails closed, and both
       'a second link opened while a wrong code is still typed leaves the field empty',
       'a wrong code can be tried again, and a body that is nearly one cannot',
       'each state the viewer can be in is the surface it is pinned to be',
+      'every drawing on the page is hidden from assistive technology and names nothing',
       'every failure the viewer can reach draws the same surface',
       'every text on every surface reaches the contrast it has to',
       'putting the page away empties it, before anything can be drawn over it',
       'reporting a link sends the identifier and nothing else',
       'the code field asks for a number pad, corrects nothing, and belongs to no form',
+      'the code field is described by the line that says how long a code is',
       'the code-entry surface reflows at three times the text size on a phone, and at twice it at the narrow width',
+      'the control that sends a code stays still for anyone who has asked for less motion',
       'the expiry is the moment it was sealed with, spelled the one way',
       'the line a code that did not match earns is a status region, and the focus is back in the field',
       'the link is out of the address bar before anything is sent, and nothing sent carries it',
+      'the page asks not to be translated, and the browser bar is the colour of the page',
       'the page reflows at a narrow width and at twice the text size',
     ],
   );
@@ -1333,6 +1337,7 @@ test('the copy the viewer ships is the copy that was agreed', () => {
     'Someone has shared a PatientScribe note with you.',
     'They\'ll have given you a code \u2014 usually over the phone.',
     'Code',
+    'The code is 8 numbers.',
     'Open the note',
     'That code didn\'t match. Check it with the person who shared this.',
     'This shared note is no longer available. If you were expecting it, ask the person who shared it.',
@@ -1340,12 +1345,13 @@ test('the copy the viewer ships is the copy that was agreed', () => {
     'Edited by ',
     'Edited by the sharer',
     'This link works until ',
+    'If you use Translate in your browser, the browser may send this note to its company, such as Google or Apple, to translate it.',
     'PatientScribe is free on the App Store',
     'This app\'s built-in browser can\'t open shared notes safely. Tap \u22ef and choose ',
     'Open in Safari',
     ' (or Chrome).',
     'Report a problem with this link',
-    'For people viewing a shared note.',
+    'Your privacy on this page',
     'This page shows you an encrypted note shared with you through PatientScribe. PatientScribe (DigiFrontiers) cannot decrypt stored share content under our normal, published viewer protocol \u2014 and we cannot verify who opens a share: anyone with both the link and the code can open it. When you open this page we handle your IP address and basic request data, kept briefly (up to 30 days) only to limit abuse and keep the service working; the access code you type is sent to us only to check it and is not kept (without it we can\'t show you the note); and each share link keeps a simple code-entry attempt counter while it exists \u2014 we use none of this for analytics, advertising, or profiling, we don\'t set cookies, and nothing here is used to track you across other sites or pages. Questions: support@patientscribe.com.au. Full policy: ',
     'patientscribe.com.au/privacy-policy',
     '.',
@@ -1379,7 +1385,13 @@ test('the copy the viewer ships is the copy that was agreed', () => {
   // the policy. Each is held as one whole sentence here as well as in pieces, so
   // a split moved by a space — or a piece dropped — is a failure against the
   // sentence rather than only against the fragments.
+  //
+  // The notice's heading is held on its own. It is the label of the closed
+  // notice rather than the notice's first sentence, so the notice is the lead,
+  // the link's text and the tail, and the heading is not a part of it.
   const [
+    ,
+    ,
     ,
     ,
     ,
@@ -1406,9 +1418,10 @@ test('the copy the viewer ships is the copy that was agreed', () => {
     'This app\'s built-in browser can\'t open shared notes safely. Tap \u22ef and choose Open in Safari (or Chrome).',
     'the advisory\'s pieces no longer make the sentence they are a split of',
   );
+  assert.equal(noticeSummary, 'Your privacy on this page', 'the notice\'s heading is not the agreed heading');
   assert.equal(
-    `${noticeSummary} ${noticeLead}${policyLinkText}${noticeTail}`,
-    'For people viewing a shared note. This page shows you an encrypted note shared with you through PatientScribe. PatientScribe (DigiFrontiers) cannot decrypt stored share content under our normal, published viewer protocol \u2014 and we cannot verify who opens a share: anyone with both the link and the code can open it. When you open this page we handle your IP address and basic request data, kept briefly (up to 30 days) only to limit abuse and keep the service working; the access code you type is sent to us only to check it and is not kept (without it we can\'t show you the note); and each share link keeps a simple code-entry attempt counter while it exists \u2014 we use none of this for analytics, advertising, or profiling, we don\'t set cookies, and nothing here is used to track you across other sites or pages. Questions: support@patientscribe.com.au. Full policy: patientscribe.com.au/privacy-policy.',
+    `${noticeLead}${policyLinkText}${noticeTail}`,
+    'This page shows you an encrypted note shared with you through PatientScribe. PatientScribe (DigiFrontiers) cannot decrypt stored share content under our normal, published viewer protocol \u2014 and we cannot verify who opens a share: anyone with both the link and the code can open it. When you open this page we handle your IP address and basic request data, kept briefly (up to 30 days) only to limit abuse and keep the service working; the access code you type is sent to us only to check it and is not kept (without it we can\'t show you the note); and each share link keeps a simple code-entry attempt counter while it exists \u2014 we use none of this for analytics, advertising, or profiling, we don\'t set cookies, and nothing here is used to track you across other sites or pages. Questions: support@patientscribe.com.au. Full policy: patientscribe.com.au/privacy-policy.',
     'the notice\'s pieces no longer make the notice they are a split of',
   );
 
@@ -1506,8 +1519,79 @@ test('the stylesheet the viewer ships is the stylesheet that was reviewed', () =
   const stylesheet = readFileSync(fileURLToPath(new URL('../../site/css/viewer.css', import.meta.url)));
   assert.equal(
     createHash('sha256').update(stylesheet).digest('hex'),
-    '105aa4879f8036b5432b7dcdd80b06ec030bb5b5e823c21d5774d1626486c6c7',
+    'e0a22a0609b23389ace2409326c0a2dfbf0191d0ce8f44c61e738c9b86121238',
     'the served stylesheet is not the one this pin was computed from — if the change was deliberate, ' +
+      'the new value goes here in the same change that makes it',
+  );
+});
+
+test('the tab icon is the picture that was reviewed, and carries nothing but the picture', () => {
+  // The one served file that is not text. A browser shows it in the tab, on a
+  // bookmark and in a share sheet, and the page names it once in its head.
+  //
+  // Pinned whole, as the stylesheet is, so a different picture is a deliberate
+  // edit to this line. And read chunk by chunk before that, because a PNG can
+  // carry more than its picture — text, a colour profile, a time, a physical
+  // size, camera data — and none of that is anything this page means to serve.
+  // What it may carry is the header, a palette and its transparency, the colour
+  // space, the image data and the end, and nothing else. Every chunk is read
+  // with its length and its checksum, so a chunk this cannot account for is a
+  // failure rather than the end of the reading.
+  const icon = readFileSync(fileURLToPath(new URL('../../site/icon.png', import.meta.url)));
+
+  /** The checksum a PNG chunk carries, over its type and its data. */
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    return c >>> 0;
+  });
+  /** @param {Buffer} bytes */
+  const crc32 = (bytes) => {
+    let c = 0xffffffff;
+    for (const byte of bytes) {
+      c = (crcTable[(c ^ byte) & 0xff] ?? 0) ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  };
+
+  assert.deepEqual([...icon.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'the icon is not a PNG');
+
+  /** @type {string[]} */
+  const kinds = [];
+  let at = 8;
+  while (at < icon.length) {
+    assert.ok(at + 12 <= icon.length, `the icon ends inside a chunk header at byte ${at}`);
+    const length = icon.readUInt32BE(at);
+    const kind = icon.subarray(at + 4, at + 8);
+    const end = at + 8 + length;
+    assert.ok(end + 4 <= icon.length, `the ${kind.toString('latin1')} chunk runs past the end of the icon`);
+    assert.equal(
+      icon.readUInt32BE(end),
+      crc32(icon.subarray(at + 4, end)),
+      `the ${kind.toString('latin1')} chunk's checksum is not the checksum of what it carries`,
+    );
+    kinds.push(kind.toString('latin1'));
+    at = end + 4;
+  }
+
+  const admitted = ['IHDR', 'PLTE', 'tRNS', 'sRGB', 'IDAT', 'IEND'];
+  for (const kind of kinds) {
+    assert.ok(admitted.includes(kind), `the icon carries a ${kind} chunk, which is not part of a picture`);
+  }
+  assert.equal(kinds[0], 'IHDR', 'the icon does not open with its header');
+  assert.equal(kinds.at(-1), 'IEND', 'the icon does not close with its end');
+  assert.equal(kinds.filter((kind) => kind === 'IEND').length, 1, 'the icon has more than one end');
+
+  // The header: 180 by 180, which is the size a phone asks for.
+  assert.equal(icon.readUInt32BE(16), 180, 'the icon is not 180 pixels wide');
+  assert.equal(icon.readUInt32BE(20), 180, 'the icon is not 180 pixels high');
+
+  assert.equal(
+    createHash('sha256').update(icon).digest('hex'),
+    'cf4c422d3301bcfa931b342017a37916c34b82d0228cfbe3df85d0eecdaae9e8',
+    'the served icon is not the one this pin was computed from — if the change was deliberate, ' +
       'the new value goes here in the same change that makes it',
   );
 });

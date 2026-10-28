@@ -121,12 +121,12 @@ const SHELL = `- main:
   - heading "PatientScribe" [level=1]
   - paragraph: Someone has shared a PatientScribe note with you.
   - paragraph: They'll have given you a code \u2014 usually over the phone.
-  - paragraph:
-    - text: Code
-    - textbox "Code"
-    - button "Open the note"
+  - text: Code
+  - paragraph: The code is 8 numbers.
+  - textbox "Code"
+  - button "Open the note"
   - status
-  - group: For people viewing a shared note.
+  - group: Your privacy on this page
   - button "Report a problem with this link"`;
 
 /** The shell, with the advice a browser that failed the probe earns. */
@@ -138,12 +138,12 @@ const SHELL_WITH_ADVISORY = `- main:
     - text: (or Chrome).
   - paragraph: Someone has shared a PatientScribe note with you.
   - paragraph: They'll have given you a code \u2014 usually over the phone.
-  - paragraph:
-    - text: Code
-    - textbox "Code"
-    - button "Open the note"
+  - text: Code
+  - paragraph: The code is 8 numbers.
+  - textbox "Code"
+  - button "Open the note"
   - status
-  - group: For people viewing a shared note.
+  - group: Your privacy on this page
   - button "Report a problem with this link"`;
 
 /** The shell, plus the one line a code that did not match earns, written into the status region. */
@@ -151,12 +151,12 @@ const WRONG_CODE = `- main:
   - heading "PatientScribe" [level=1]
   - paragraph: Someone has shared a PatientScribe note with you.
   - paragraph: They'll have given you a code \u2014 usually over the phone.
-  - paragraph:
-    - text: Code
-    - textbox "Code": ${TYPED_CODE}
-    - button "Open the note"
+  - text: Code
+  - paragraph: The code is 8 numbers.
+  - textbox "Code": ${TYPED_CODE}
+  - button "Open the note"
   - status: That code didn't match. Check it with the person who shared this.
-  - group: For people viewing a shared note.
+  - group: Your privacy on this page
   - button "Report a problem with this link"`;
 
 /** That line on its own, as the region it is written into holds it. */
@@ -178,12 +178,12 @@ const WRONG_CODE_NOTHING_TYPED = `- main:
   - heading "PatientScribe" [level=1]
   - paragraph: Someone has shared a PatientScribe note with you.
   - paragraph: They'll have given you a code \u2014 usually over the phone.
-  - paragraph:
-    - text: Code
-    - textbox "Code"
-    - button "Open the note"
+  - text: Code
+  - paragraph: The code is 8 numbers.
+  - textbox "Code"
+  - button "Open the note"
   - status: That code didn't match. Check it with the person who shared this.
-  - group: For people viewing a shared note.
+  - group: Your privacy on this page
   - button "Report a problem with this link"`;
 
 /**
@@ -202,19 +202,19 @@ const SHELL_SENDING = `- main:
   - heading "PatientScribe" [level=1]
   - paragraph: Someone has shared a PatientScribe note with you.
   - paragraph: They'll have given you a code \u2014 usually over the phone.
-  - paragraph:
-    - text: Code
-    - textbox "Code": ${TYPED_CODE}
-    - button "Open the note" [disabled]
+  - text: Code
+  - paragraph: The code is 8 numbers.
+  - textbox "Code": ${TYPED_CODE}
+  - button "Open the note" [disabled]
   - status
-  - group: For people viewing a shared note.
+  - group: Your privacy on this page
   - button "Report a problem with this link"`;
 
 /** The one surface every failure ends on, where there is a link to report. */
 const UNAVAILABLE = `- main:
   - heading "PatientScribe" [level=1]
   - paragraph: This shared note is no longer available. If you were expecting it, ask the person who shared it.
-  - group: For people viewing a shared note.
+  - group: Your privacy on this page
   - button "Report a problem with this link"`;
 
 /**
@@ -228,7 +228,7 @@ const UNAVAILABLE = `- main:
 const UNAVAILABLE_UNNAMED = `- main:
   - heading "PatientScribe" [level=1]
   - paragraph: This shared note is no longer available. If you were expecting it, ask the person who shared it.
-  - group: For people viewing a shared note.`;
+  - group: Your privacy on this page`;
 
 /**
  * The collection notice, transcribed from the agreed text rather than read from
@@ -336,10 +336,11 @@ function decryptedSurface(plaintext, aadText) {
     `  - paragraph: ${doc.topic}`,
     ...body,
     `  - paragraph: This link works until ${expiryText(aad.exp)}`,
+    '  - paragraph: If you use Translate in your browser, the browser may send this note to its company, such as Google or Apple, to translate it.',
     '  - paragraph:',
     '    - link "PatientScribe is free on the App Store":',
     '      - /url: https://apps.apple.com/au/app/id6758035505',
-    '  - group: For people viewing a shared note.',
+    '  - group: Your privacy on this page',
     '  - button "Report a problem with this link"',
   ].join('\n');
 }
@@ -2416,7 +2417,7 @@ test('every text on every surface reaches the contrast it has to', async ({ page
    * to every element in the page, and applied to the wrong ones it is the reading
    * agreeing with a page that shows nothing. An element that is REQUIRED to be on
    * screen and has no box is a failure of this rather than a skip: the ids below
-   * are the ones every one of these surfaces carries, and each of them is asked
+   * are the ones each of these surfaces carries, and each of them is asked
    * for a box whether or not the walk reached it. A collapsed notice is exactly
    * the shape this had no opinion about.
    *
@@ -2432,10 +2433,16 @@ test('every text on every surface reaches the contrast it has to', async ({ page
    * What this still does not read is whether the elements it measured were
    * anywhere a recipient could see them. That is asked separately, of the same
    * required ids, by `imperceptible` at the top of this file.
+   *
+   * Each surface adds the lines of its own that it has to be showing: the line
+   * under the code field's label on the two code-entry surfaces, and the line
+   * about a browser's own translation on a decrypted note.
    */
-  const onScreen = ['brand', ...NOTICE_ON_SCREEN];
+  const everywhere = ['brand', ...NOTICE_ON_SCREEN];
 
-  const measure = async () => {
+  /** @param {readonly string[]} ownLines */
+  const measure = async (ownLines) => {
+    const onScreen = [...everywhere, ...ownLines];
     const contrast = await page.evaluate((required) => {
       const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
       /** @param {string} colour */
@@ -2480,9 +2487,10 @@ test('every text on every surface reaches the contrast it has to', async ({ page
         return { r: 255, g: 255, b: 255, a: 1 };
       };
 
-      // The brand line and every span the collection notice is written into.
-      // Each of them is on each of the surfaces this test drives, and each is
-      // opened before the reading is taken, so an element here with no box is a
+      // The brand line and every span the collection notice is written into,
+      // and the surface's own lines. The first two are on each of the surfaces
+      // this test drives, and the notice is opened before the reading is taken,
+      // so an element here with no box is a
       // page that is not showing something it has to. The list is handed in from
       // outside so that this and the reading of whether these same elements can
       // be seen at all are asking about one set of elements rather than two.
@@ -2560,20 +2568,19 @@ test('every text on every surface reaches the contrast it has to', async ({ page
 
   await openLink(page, fragmentFor(named));
   await openTheNotice(page);
-  expect(await measure(), 'the shell').toEqual([]);
+  expect(await measure(['code-hint']), 'the shell').toEqual([]);
 
   // And a decrypted note, which is the surface with the most on it.
   //
-  // What is not read here is the submit control while a request is in flight. By
-  // the time a note is on screen the shell is hidden, so that control has no box
-  // and the reading above skips it — this used to say it was being measured.
-  // Reading it would mean holding a request open while the measurement runs,
-  // which is not what this drives.
+  // By the time a note is on screen the shell is hidden, so the submit control
+  // has no box here and the reading skips it. The control while a request is in
+  // flight, which is drawn in a colour of its own, is read on a surface of its
+  // own below, with the request held open while the measurement runs.
   await page.locator('#code-input').fill(TYPED_CODE);
   await page.locator('#code-submit').click();
   await expect(page.locator('#note')).toBeVisible();
   await openTheNotice(page);
-  expect(await measure(), 'a decrypted note').toEqual([]);
+  expect(await measure(['translate-note']), 'a decrypted note').toEqual([]);
 
   await page.unroute(shareOpenAt(baseURL));
   await page.route(shareOpenAt(baseURL), (route) =>
@@ -2583,11 +2590,34 @@ test('every text on every surface reaches the contrast it has to', async ({ page
   await enterCode(page);
   await expect(page.locator('#wrong-code')).toBeVisible();
   await openTheNotice(page);
-  expect(await measure(), 'a code that did not match').toEqual([]);
+  expect(await measure(['code-hint']), 'a code that did not match').toEqual([]);
+
+  // And the control that sent a code, while the code is being checked: held
+  // there by a request that is not answered until the reading is taken, as the
+  // reading of the control's motion holds it. The control is required to be on
+  // screen, so a busy control with no box is a failure rather than a skip.
+  /** @type {{ go: () => void }} */
+  const held = { go: () => {} };
+  await page.unroute(shareOpenAt(baseURL));
+  await page.route(shareOpenAt(baseURL), async (route) => {
+    await new Promise((resolve) => {
+      held.go = () => resolve(undefined);
+    });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"wrong_code"}' });
+  });
+  await openLink(page, fragmentFor(named));
+  await openTheNotice(page);
+  const stalled = page.waitForRequest(shareOpenAt(baseURL));
+  await enterCode(page);
+  await stalled;
+  await expect(page.locator('#code-submit')).toBeDisabled();
+  expect(await measure(['code-hint', 'code-submit']), 'a code being checked').toEqual([]);
+  held.go();
+  await expect(page.locator('#wrong-code')).toHaveText(WRONG_CODE_LINE);
 
   await openLink(page, '#not-a-link');
   await openTheNotice(page);
-  expect(await measure(), 'the unavailable surface').toEqual([]);
+  expect(await measure([]), 'the unavailable surface').toEqual([]);
 
   expect(seen.errors).toEqual([]);
   expect(seen.all).toEqual([]);
@@ -2610,6 +2640,7 @@ test('the page reflows at a narrow width and at twice the text size', async ({ p
   await page.setViewportSize({ width: 320, height: 640 });
   await openLink(page, fragmentFor(named));
   expect(await overflows(), 'the shell scrolls sideways at 320px').toBeLessThanOrEqual(0);
+  await expect(page.locator('#code-hint')).toBeVisible();
   await expect(page.locator('#code-input')).toBeVisible();
   await expect(page.locator('#code-submit')).toBeVisible();
   await expect(page.locator('#report')).toBeVisible();
@@ -2617,6 +2648,7 @@ test('the page reflows at a narrow width and at twice the text size', async ({ p
   await enterCode(page);
   await expect(page.locator('#note')).toBeVisible();
   expect(await overflows(), 'a decrypted note scrolls sideways at 320px').toBeLessThanOrEqual(0);
+  await expect(page.locator('#translate-note')).toBeVisible();
 
   // And twice the text size, which is the other half of the same requirement.
   // Everything in the stylesheet is sized in relative units, so this is what
@@ -2628,6 +2660,7 @@ test('the page reflows at a narrow width and at twice the text size', async ({ p
   });
   expect(await overflows(), 'a decrypted note scrolls sideways at twice the text size').toBeLessThanOrEqual(0);
   await expect(page.locator('#report')).toBeVisible();
+  await expect(page.locator('#translate-note')).toBeVisible();
   await expect(page.locator('#app-link')).toBeVisible();
 
   expect(seen.errors).toEqual([]);
@@ -2947,10 +2980,96 @@ test('the code-entry surface reflows at three times the text size on a phone, an
   // Both the shell and the shell with the line a code that did not match earns,
   // at each. The text size is set again after every open, because a load puts
   // the root's own style back to nothing.
+  //
+  // Not scrolling sideways is not the whole of it. A field that keeps its own
+  // width can still hold its text in a box too narrow to show it, and a control
+  // or a name that keeps its width can still break in the middle of a word. So
+  // at each setting a code of the length the hint names is typed, and the field
+  // is required to show all of it, in digits no smaller than the text around
+  // them; and the control's words, the name and the line that opens the
+  // surface, which carries the name too, are required to break only between
+  // words. A phone's width is read at three times the text size twice,
+  // at the width of a small phone and of a large one, because the space the
+  // field is given does not grow with the width as fast as the text does.
+  //
+  // And at the default size the field is the one the page was designed with:
+  // its digits half as large again as the text, and spaced apart.
   const seen = watch(page, baseURL);
   await page.route(shareOpenAt(baseURL), (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"wrong_code"}' }),
   );
+
+  const codeOfTheHintsLength = '1234 5678';
+
+  const fitting = () =>
+    page.evaluate(() => {
+      const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+      const document = inPage['document'];
+      const field = document.getElementById('code-input');
+      const fieldStyle = inPage['getComputedStyle'](field);
+
+      /**
+       * Each place the element's text moves to a new line other than at a space.
+       *
+       * @param {string} id
+       * @returns {string[]}
+       */
+      const breaksInsideAWord = (id) => {
+        const text = document.getElementById(id).firstChild;
+        const spelled = String(text.textContent);
+        /** @type {string[]} */
+        const found = [];
+        /** @type {number | null} */
+        let lineTop = null;
+        for (let at = 0; at < spelled.length; at += 1) {
+          const range = document.createRange();
+          range.setStart(text, at);
+          range.setEnd(text, at + 1);
+          const boxes = Array.from(range.getClientRects()).filter((/** @type {any} */ box) => Number(box.width) > 0);
+          if (boxes.length === 0) continue;
+          const top = Number(/** @type {any} */ (boxes[0]).top);
+          if (lineTop !== null && Math.abs(top - lineTop) > 2 && spelled[at - 1] !== ' ' && spelled[at] !== ' ') {
+            found.push(`${spelled.slice(0, at)}|${spelled.slice(at)}`);
+          }
+          lineTop = top;
+        }
+        return found;
+      };
+
+      return {
+        textSize: Number.parseFloat(String(inPage['getComputedStyle'](document.documentElement).fontSize)),
+        digitSize: Number.parseFloat(String(fieldStyle.fontSize)),
+        digitSpacing: Number.parseFloat(String(fieldStyle.letterSpacing)) || 0,
+        held: Number(field.scrollWidth),
+        shown: Number(field.clientWidth),
+        control: breaksInsideAWord('code-submit'),
+        name: breaksInsideAWord('brand'),
+        opening: breaksInsideAWord('shell-intro'),
+      };
+    });
+
+  /** @param {string} where */
+  const expectTheWholeCode = async (where) => {
+    await page.locator('#code-input').fill(codeOfTheHintsLength);
+    const read = await fitting();
+    expect(read.held, `the field hides part of a typed code ${where}`).toBeLessThanOrEqual(read.shown);
+    expect(read.digitSize, `the field's digits are smaller than the text ${where}`).toBeGreaterThanOrEqual(read.textSize);
+    expect(read.control, `the control's words break inside a word ${where}`).toEqual([]);
+    expect(read.name, `the name breaks inside the word ${where}`).toEqual([]);
+    expect(read.opening, `the line that opens the surface breaks inside a word ${where}`).toEqual([]);
+    return read;
+  };
+
+  for (const width of [375, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    await openLink(page, fragmentFor(named));
+    const read = await expectTheWholeCode(`at ${width}px with the text at its default size`);
+    expect(read.digitSize, `the field's digits are not the designed size at ${width}px`).toBe(read.textSize * 1.5);
+    expect(read.digitSpacing, `the field's digits are not spaced as designed at ${width}px`).toBeCloseTo(
+      read.digitSize * 0.14,
+      2,
+    );
+  }
 
   const overflows = () =>
     page.evaluate(() => {
@@ -2969,6 +3088,7 @@ test('the code-entry surface reflows at three times the text size on a phone, an
   /** @type {[number, number, string][]} */
   const settings = [
     [402, 874, '300%'],
+    [375, 812, '300%'],
     [320, 640, '200%'],
   ];
   for (const [width, height, size] of settings) {
@@ -2976,7 +3096,9 @@ test('the code-entry surface reflows at three times the text size on a phone, an
     await openLink(page, fragmentFor(named));
     await textAt(size);
     expect(await overflows(), `the shell scrolls sideways at ${width}px with the text at ${size}`).toBeLessThanOrEqual(0);
+    await expect(page.locator('#code-hint')).toBeVisible();
     await expect(page.locator('#code-submit')).toBeVisible();
+    await expectTheWholeCode(`at ${width}px with the text at ${size}`);
 
     await enterCode(page);
     await expect(page.locator('#wrong-code')).toBeVisible();
@@ -2984,7 +3106,9 @@ test('the code-entry surface reflows at three times the text size on a phone, an
       await overflows(),
       `a code that did not match scrolls sideways at ${width}px with the text at ${size}`,
     ).toBeLessThanOrEqual(0);
+    await expect(page.locator('#code-hint')).toBeVisible();
     await expect(page.locator('#code-submit')).toBeVisible();
+    await expectTheWholeCode(`after a code that did not match, at ${width}px with the text at ${size}`);
   }
 
   expect(seen.errors).toEqual([]);
@@ -2999,7 +3123,9 @@ test('the code field asks for a number pad, corrects nothing, and belongs to no 
   // capital letter or correction put into what is typed. A code a recipient
   // pastes is sent as it was pasted, and nothing submits it but the control and
   // the return key — so there is no form, and no validity of the field's own
-  // that a form could refuse a press over.
+  // that a form could refuse a press over. The last attribute is not about the
+  // keyboard: it names the line under the label that says how long a code is,
+  // as the field's description, so a screen reader reads it with the field.
   //
   // Read by name, whole, so an attribute added to the field is a failure here as
   // well as in the page inventory the smoke suite reads.
@@ -3011,12 +3137,13 @@ test('the code field asks for a number pad, corrects nothing, and belongs to no 
     const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
     return Array.from(inPage['document'].getElementById('code-input').getAttributeNames(), String);
   });
-  expect(names).toEqual(['id', 'type', 'inputmode', 'pattern', 'autocapitalize', 'autocorrect']);
+  expect(names).toEqual(['id', 'type', 'inputmode', 'pattern', 'autocapitalize', 'autocorrect', 'aria-describedby']);
   await expect(field).toHaveAttribute('type', 'text');
   await expect(field).toHaveAttribute('inputmode', 'numeric');
   await expect(field).toHaveAttribute('pattern', '[0-9]*');
   await expect(field).toHaveAttribute('autocapitalize', 'none');
   await expect(field).toHaveAttribute('autocorrect', 'off');
+  await expect(field).toHaveAttribute('aria-describedby', 'code-hint');
   await expect(page.locator('form')).toHaveCount(0);
 
   expect(seen.errors).toEqual([]);
@@ -3085,6 +3212,307 @@ test('a second link opened while a wrong code is still typed leaves the field em
     since.filter((path) => path.startsWith('/prod/share/')),
     'a share was asked for before a code was typed into the page the second link loaded',
   ).toEqual([]);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the page asks not to be translated, and the browser bar is the colour of the page', async ({ page, baseURL }) => {
+  // Two lines in the head that change nothing a recipient reads. One asks a
+  // browser that offers to translate pages not to offer it here, which is
+  // advice the browser may ignore — so the note itself says what translating
+  // it would do, and that line is pinned with the rest of the note. The other
+  // is the colour a phone's browser paints its own frame in, and it is the
+  // page's background, so the two cannot drift apart without this saying so:
+  // the value written in the head is compared with the colour the browser
+  // resolved for the body, not with a third spelling of it here.
+  //
+  // And no element asks the opposite, or asks it of part of the page. The
+  // request is the page's, made once, and an attribute on one element would be
+  // a second answer to the same question.
+  const seen = watch(page, baseURL);
+  await openLink(page, fragmentFor(named));
+
+  const head = await page.evaluate(() => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    const owner = inPage['document'];
+    /** @param {string} name */
+    const metas = (name) =>
+      Array.from(owner.querySelectorAll(`meta[name="${name}"]`), (/** @type {any} */ one) => ({
+        content: String(one.getAttribute('content')),
+        inHead: one.parentElement === owner.head,
+      }));
+    return {
+      google: metas('google'),
+      theme: metas('theme-color'),
+      body: String(inPage['getComputedStyle'](owner.body).backgroundColor),
+      translate: Array.from(owner.querySelectorAll('[translate]'), (/** @type {any} */ one) =>
+        String(one.tagName).toLowerCase(),
+      ),
+    };
+  });
+
+  expect(head.google, 'the page does not carry exactly one request not to be translated').toEqual([
+    { content: 'notranslate', inHead: true },
+  ]);
+  expect(head.theme, 'the page does not carry exactly one colour for the browser bar').toHaveLength(1);
+  const written = head.theme[0]?.content ?? '';
+  expect(head.theme[0]?.inHead).toBe(true);
+  expect(written, 'the bar colour is not written as six hex digits').toMatch(/^#[0-9a-f]{6}$/);
+  const channels = [1, 3, 5].map((at) => Number.parseInt(written.slice(at, at + 2), 16));
+  expect(head.body, 'the browser bar is not the colour the page is painted').toBe(`rgb(${channels.join(', ')})`);
+  expect(head.translate, 'an element carries a translate attribute of its own').toEqual([]);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the code field is described by the line that says how long a code is', async ({ page, baseURL }) => {
+  // The line sits between the label and the field, where a sighted reader
+  // meets it, and it is the field's description as well, so a screen reader
+  // reads it with the field rather than leaving it to be found. Read twice:
+  // as the description the accessibility tree computes for the field, and as
+  // the text of whatever the field's attribute names, so a description that
+  // came from somewhere else is not mistaken for this one.
+  const seen = watch(page, baseURL);
+  await openLink(page, fragmentFor(named));
+
+  const field = page.locator('#code-input');
+  await expect(field).toHaveAccessibleDescription('The code is 8 numbers.');
+  const described = await page.evaluate(() => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    const owner = inPage['document'];
+    const names = String(owner.getElementById('code-input').getAttribute('aria-describedby') ?? '')
+      .split(' ')
+      .filter((one) => one !== '');
+    return names.map((one) => {
+      const found = owner.getElementById(one);
+      return found === null ? null : String(found.textContent);
+    });
+  });
+  expect(described, 'the field is not described by the line under its label, and by nothing else').toEqual([
+    'The code is 8 numbers.',
+  ]);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('every drawing on the page is hidden from assistive technology and names nothing', async ({ page, baseURL }) => {
+  // The drawings are decoration: the mark beside the name, the small icons,
+  // and the drawing on the page every failure ends on. None of them says
+  // anything a recipient needs, so each is taken out of the accessibility tree
+  // and out of the focus order, which is also what keeps every pinned surface
+  // above unchanged by them.
+  //
+  // And none of them can reach outside the page. A drawing written inline needs
+  // no namespace declaration, and one carrying it would be a drawing naming an
+  // address; a style attribute is a style this page's policy refuses; and a
+  // reference to another element or file is a fetch or a copy of something
+  // else. Their colours come from classes in the stylesheet, so a colour
+  // written on a drawing is a second palette, and the only paint attribute
+  // admitted is the one that says there is none. Each carries the size it is
+  // drawn at, so a page whose stylesheet did not arrive draws it at that size
+  // rather than as wide as the page; the stylesheet sizes it otherwise.
+  //
+  // The renderer writes text by replacing an element's children, so a drawing
+  // inside an element it writes into is gone the moment that element is
+  // written. That is why each drawing sits beside the element that holds its
+  // text, and it is read on every surface the renderer draws rather than only
+  // the first: the code entry, a decrypted note, and the page every failure
+  // ends on. On each, every drawing is still in the page, each small icon is
+  // still directly before the element its panel's text is written into, and
+  // the drawing that belongs to the failure page is shown there and only there.
+  const seen = watch(page, baseURL);
+
+  /** @type {{ body: string }} */
+  const answer = { body: shareBody(named) };
+  await page.route(shareOpenAt(baseURL), (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: answer.body }),
+  );
+
+  /** How many drawings the page is written with. */
+  const DRAWINGS = 8;
+
+  /**
+   * What each small icon sits directly before, in the order the page has them:
+   * the element its panel's text is written into, by id, or for the advisory
+   * the plain span that holds the three it is written into, named by the first
+   * of them.
+   */
+  const BESIDE = ['> advisory-lead', 'banner', 'expiry', 'translate-note', 'notice-summary'];
+
+  /** @type {[string, () => Promise<void>, string[]][]} */
+  const surfaces = [
+    [
+      'the code-entry surface',
+      async () => {
+        await openLink(page, fragmentFor(named));
+        await expect(page.locator('#shell')).toBeVisible();
+      },
+      ['notice-summary'],
+    ],
+    [
+      'a decrypted note',
+      async () => {
+        answer.body = shareBody(named);
+        await openLink(page, fragmentFor(named));
+        await enterCode(page);
+        await expect(page.locator('#note')).toBeVisible();
+      },
+      ['banner', 'expiry', 'translate-note', 'notice-summary'],
+    ],
+    [
+      'the page every failure ends on',
+      async () => {
+        answer.body = '{"status":"unavailable"}';
+        await openLink(page, fragmentFor(named));
+        await enterCode(page);
+        await expect(page.locator('#unavailable')).toBeVisible();
+      },
+      ['notice-summary'],
+    ],
+  ];
+
+  const allowedTags = ['svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline'];
+  for (const [surface, reach, written] of surfaces) {
+    await reach();
+
+    const read = await page.evaluate(() => {
+      const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+      const document = inPage['document'];
+      const drawings = Array.from(document.querySelectorAll('svg'), (/** @type {any} */ drawing) => {
+        /** @type {any[]} */
+        const parts = [drawing, ...Array.from(drawing.querySelectorAll('*'))];
+        return {
+          hidden: drawing.getAttribute('aria-hidden'),
+          focusable: drawing.getAttribute('focusable'),
+          width: drawing.getAttribute('width'),
+          height: drawing.getAttribute('height'),
+          tags: parts.map((one) => String(one.localName)),
+          attributes: parts.flatMap((one) =>
+            Array.from(one.attributes, (/** @type {any} */ attribute) => ({
+              name: String(attribute.name),
+              value: String(attribute.value),
+            })),
+          ),
+        };
+      });
+      const icons = Array.from(document.querySelectorAll('svg.icon'), (/** @type {any} */ icon) => {
+        const next = icon.nextElementSibling;
+        if (next === null) {
+          return { beside: '', text: '' };
+        }
+        const id = String(next.id);
+        const first = next.firstElementChild;
+        return {
+          beside: id !== '' ? id : `> ${first === null ? '' : String(first.id)}`,
+          text: String(next.textContent ?? '').trim(),
+        };
+      });
+      const art = document.querySelector('svg.ended-art');
+      const artBox = art === null ? null : art.getBoundingClientRect();
+      return {
+        drawings,
+        icons,
+        artFollowsTheLine: art !== null && art.previousElementSibling === document.getElementById('unavailable'),
+        artShown: artBox !== null && Number(artBox.width) > 0 && Number(artBox.height) > 0,
+      };
+    });
+
+    expect(read.drawings.length, `${surface} has lost a drawing, or gained one`).toBe(DRAWINGS);
+    for (const [index, drawing] of read.drawings.entries()) {
+      expect(drawing.hidden, `${surface}: drawing ${index} is not hidden from assistive technology`).toBe('true');
+      expect(drawing.focusable, `${surface}: drawing ${index} can take the focus`).toBe('false');
+      expect(drawing.width ?? '', `${surface}: drawing ${index} carries no width of its own`).toMatch(/^[1-9][0-9]*$/);
+      expect(drawing.height ?? '', `${surface}: drawing ${index} carries no height of its own`).toMatch(/^[1-9][0-9]*$/);
+      for (const tag of drawing.tags) {
+        expect(allowedTags, `${surface}: drawing ${index} carries a ${tag} element`).toContain(tag);
+      }
+      for (const { name, value } of drawing.attributes) {
+        expect(name.startsWith('xmlns'), `${surface}: drawing ${index} declares a namespace: ${name}`).toBe(false);
+        expect(name, `${surface}: drawing ${index} carries a style attribute`).not.toBe('style');
+        expect(name.endsWith('href'), `${surface}: drawing ${index} refers to something: ${name}`).toBe(false);
+        expect(['stroke', 'color', 'stop-color'], `${surface}: drawing ${index} writes a colour: ${name}`).not.toContain(
+          name,
+        );
+        if (name === 'fill') {
+          expect(value, `${surface}: drawing ${index} writes a fill colour`).toBe('none');
+        }
+      }
+    }
+
+    expect(
+      read.icons.map((icon) => icon.beside),
+      `${surface}: an icon is not directly before the element its text is written into`,
+    ).toEqual(BESIDE);
+    for (const icon of read.icons) {
+      if (written.includes(icon.beside)) {
+        expect(icon.text, `${surface}: the text beside the icon before ${icon.beside} was not written`).not.toBe('');
+      }
+    }
+
+    expect(read.artFollowsTheLine, `${surface}: the failure drawing is not beside the failure line`).toBe(true);
+    expect(read.artShown, `${surface}: the failure drawing is shown where it does not belong, or not where it does`).toBe(
+      surface === 'the page every failure ends on',
+    );
+  }
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the control that sends a code stays still for anyone who has asked for less motion', async ({
+  page,
+  baseURL,
+}) => {
+  // While a code is being checked, a band sweeps across the control that sent
+  // it: no words, because the control saying nothing by not being pressable is
+  // the design. Someone who has asked their device for less motion gets the
+  // control without the band, and the same control otherwise.
+  //
+  // Both halves are read, from what the browser resolved with the request held
+  // open. With no preference the sweep is there, which is what makes the other
+  // half a reading of the rule that stops it rather than of a page that never
+  // moved.
+  const seen = watch(page, baseURL);
+
+  /** @type {{ go: () => void }} */
+  const held = { go: () => {} };
+  await page.route(shareOpenAt(baseURL), async (route) => {
+    await new Promise((resolve) => {
+      held.go = () => resolve(undefined);
+    });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"wrong_code"}' });
+  });
+
+  const motion = () =>
+    page.evaluate(() => {
+      const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+      const style = inPage['getComputedStyle'](inPage['document'].getElementById('code-submit'));
+      return { animation: String(style.animationName), image: String(style.backgroundImage) };
+    });
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openLink(page, fragmentFor(named));
+  const stalled = page.waitForRequest(shareOpenAt(baseURL));
+  await enterCode(page);
+  await stalled;
+  await expect(page.locator('#code-submit')).toBeDisabled();
+
+  expect(await motion(), 'the control moves for someone who asked for less motion').toEqual({
+    animation: 'none',
+    image: 'none',
+  });
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const moving = await motion();
+  expect(moving.animation, 'the control does not sweep at all, so the reading above reads nothing').not.toBe('none');
+  expect(moving.image).toContain('linear-gradient');
+
+  held.go();
+  await expect(page.locator('#wrong-code')).toHaveText(WRONG_CODE_LINE);
+  await expect(page.locator('#code-submit')).toBeEnabled();
 
   expect(seen.errors).toEqual([]);
   expect(seen.all).toEqual([]);

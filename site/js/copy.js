@@ -47,8 +47,13 @@ export const COPY = Object.freeze({
   shellIntro: `Someone has shared a PatientScribe note with you.`,
   codeHelper: `They'll have given you a code — usually over the phone.`,
 
-  /** The code field's label, and the control that sends what was typed. */
+  /**
+   * The code field's label, the line under it that says what a code looks like,
+   * and the control that sends what was typed. The line is the field's
+   * description as well, so it is read out with the field.
+   */
   codeLabel: `Code`,
+  codeHint: `The code is 8 numbers.`,
   codeSubmit: `Open the note`,
 
   /**
@@ -81,6 +86,12 @@ export const COPY = Object.freeze({
   /** The expiry line's lead, followed by the formatted date and time. */
   expiryLead: `This link works until `,
 
+  /**
+   * The line after the expiry that says what a browser's own translation does
+   * with what is on the page.
+   */
+  translateNote: `If you use Translate in your browser, the browser may send this note to its company, such as Google or Apple, to translate it.`,
+
   /** The text of the link to the app. Where it points is static in the page. */
   appBanner: `PatientScribe is free on the App Store`,
 
@@ -100,15 +111,15 @@ export const COPY = Object.freeze({
   reportControl: `Report a problem with this link`,
 
   /**
-   * The collection notice: its own lead sentence, then the body in two pieces
-   * around the link to the full policy.
+   * The collection notice: its heading, which is also what the closed notice
+   * shows, then the body in two pieces around the link to the full policy.
    *
    * The claim about decryption is made once, in these words, and is not
    * restated anywhere in this viewer. It is scoped on purpose — to stored share
    * content, under the published protocol — because a shorter, stronger
    * sentence would be a claim this design does not support.
    */
-  noticeSummary: `For people viewing a shared note.`,
+  noticeSummary: `Your privacy on this page`,
   noticeLead: `This page shows you an encrypted note shared with you through PatientScribe. PatientScribe (DigiFrontiers) cannot decrypt stored share content under our normal, published viewer protocol — and we cannot verify who opens a share: anyone with both the link and the code can open it. When you open this page we handle your IP address and basic request data, kept briefly (up to 30 days) only to limit abuse and keep the service working; the access code you type is sent to us only to check it and is not kept (without it we can't show you the note); and each share link keeps a simple code-entry attempt counter while it exists — we use none of this for analytics, advertising, or profiling, we don't set cookies, and nothing here is used to track you across other sites or pages. Questions: support@patientscribe.com.au. Full policy: `,
   policyLinkText: `patientscribe.com.au/privacy-policy`,
   noticeTail: `.`,

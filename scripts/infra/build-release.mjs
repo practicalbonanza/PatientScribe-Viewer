@@ -215,6 +215,12 @@ const STYLESHEET = /<link rel="stylesheet" href="([^"]*)" \/>/g;
 /** The module the entry document loads, exactly as it is written. */
 const MODULE_SCRIPT = /<script type="module" src="([^"]*)"><\/script>/g;
 
+/** The tab icon the entry document links, exactly as it is written. */
+const ICON = /<link rel="icon" type="image\/png" href="([^"]*)" \/>/g;
+
+/** The eight bytes every PNG file begins with. */
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
 /**
  * @param {string} what
  * @returns {void}
@@ -333,6 +339,8 @@ function main() {
   const scripts = [];
   /** @type {string[]} */
   const styles = [];
+  /** @type {string[]} */
+  const images = [];
   for (const relativePath of sources) {
     if (relativePath === ENTRY_SOURCE) {
       continue;
@@ -345,8 +353,12 @@ function main() {
       styles.push(relativePath);
       continue;
     }
+    if (relativePath.endsWith('.png')) {
+      images.push(relativePath);
+      continue;
+    }
     refuse(
-      `${relativePath} is neither the entry document nor a .js or .css file, and this build's layout is exactly those — an object of another class is a decision nobody has made`,
+      `${relativePath} is neither the entry document nor a .js, .css or .png file, and this build's layout is exactly those — an object of another class is a decision nobody has made`,
     );
   }
 
@@ -361,6 +373,18 @@ function main() {
   // The constructs this build refuses rather than guesses at.
   // ------------------------------------------------------------------
   for (const relativePath of sources) {
+    // An image is bytes rather than text, and names nothing: the three bytes of
+    // a parent specifier can turn up anywhere in compressed pixels, and a
+    // refusal of them there would be a refusal of a picture. What it is read
+    // for is whether it is a picture at all, so a file of some other kind
+    // cannot join the release under the one name this layout admits images by.
+    if (images.includes(relativePath)) {
+      const head = sourceBytes.get(relativePath)?.subarray(0, PNG_SIGNATURE.length);
+      if (head === undefined || Buffer.compare(head, PNG_SIGNATURE) !== 0) {
+        refuse(`${relativePath} is named .png and does not begin with the PNG signature, and this build serves a .png only as a picture`);
+      }
+      continue;
+    }
     const text = String(sourceBytes.get(relativePath));
     if (text.includes('../')) {
       refuse(`${relativePath} carries a ../ specifier, and this build resolves siblings only`);
@@ -448,6 +472,18 @@ function main() {
     servedPath.set(relativePath, `/assets/${digest}.css`);
   }
 
+  // Images are served as they are, named by the digest of their own bytes like
+  // every other asset. One the entry document does not link is still an object
+  // of the release, as a stylesheet or a module nothing names is.
+  for (const relativePath of images) {
+    const bytes = sourceBytes.get(relativePath);
+    if (bytes === undefined) {
+      cannotRun(`${relativePath} disappeared while it was being read`);
+    }
+    built.set(relativePath, bytes);
+    servedPath.set(relativePath, `/assets/${sha256Hex(bytes)}.png`);
+  }
+
   for (const relativePath of order) {
     const bytes = sourceBytes.get(relativePath);
     if (bytes === undefined) {
@@ -510,6 +546,12 @@ function main() {
 
   const stylesheet = exactlyOne(entryText, STYLESHEET, 'stylesheet link(s)');
   entryText = entryText.replace(String(stylesheet[0]), `<link rel="stylesheet" href="${servedFor(String(stylesheet[1]))}" />`);
+
+  const icon = exactlyOne(entryText, ICON, 'icon link(s)');
+  if (!String(icon[1]).endsWith('.png')) {
+    refuse(`the entry document's icon link names ${JSON.stringify(icon[1])}, and the icon is a .png`);
+  }
+  entryText = entryText.replace(String(icon[0]), `<link rel="icon" type="image/png" href="${servedFor(String(icon[1]))}" />`);
 
   const moduleScript = exactlyOne(entryText, MODULE_SCRIPT, 'module script(s)');
   entryText = entryText.replace(

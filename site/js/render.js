@@ -93,6 +93,7 @@ const SELECTORS = Object.freeze({
   shellIntro: '#shell-intro',
   codeHelper: '#code-helper',
   codeLabel: '#code-label',
+  codeHint: '#code-hint',
   codeInput: '#code-input',
   codeSubmit: '#code-submit',
   wrongCode: '#wrong-code',
@@ -105,6 +106,7 @@ const SELECTORS = Object.freeze({
   topic: '#topic',
   noteBody: '#note-body',
   expiry: '#expiry',
+  translateNote: '#translate-note',
   appLink: '#app-link',
   footer: '#footer',
   noticeSummary: '#notice-summary',
@@ -127,6 +129,7 @@ const SELECTORS = Object.freeze({
  * @property {HTMLElement} shellIntro
  * @property {HTMLElement} codeHelper
  * @property {HTMLElement} codeLabel
+ * @property {HTMLElement} codeHint
  * @property {HTMLInputElement} codeInput
  * @property {HTMLButtonElement} codeSubmit
  * @property {HTMLElement} wrongCode
@@ -139,6 +142,7 @@ const SELECTORS = Object.freeze({
  * @property {HTMLElement} topic
  * @property {HTMLElement} noteBody
  * @property {HTMLElement} expiry
+ * @property {HTMLElement} translateNote
  * @property {HTMLElement} appLink
  * @property {HTMLElement} footer
  * @property {HTMLElement} noticeSummary
@@ -314,8 +318,10 @@ export function renderChrome(root) {
   page.shellIntro.textContent = COPY.shellIntro;
   page.codeHelper.textContent = COPY.codeHelper;
   page.codeLabel.textContent = COPY.codeLabel;
+  page.codeHint.textContent = COPY.codeHint;
   page.codeSubmit.textContent = COPY.codeSubmit;
   page.unavailable.textContent = COPY.unavailable;
+  page.translateNote.textContent = COPY.translateNote;
   page.appLink.textContent = COPY.appBanner;
   page.report.textContent = COPY.reportControl;
 
