@@ -2992,6 +2992,22 @@ test('the code-entry surface reflows at three times the text size on a phone, an
   // at the width of a small phone and of a large one, because the space the
   // field is given does not grow with the width as fast as the text does.
   //
+  // What the page cannot do is keep a word whole that is wider than its line.
+  // The families the page names start with the system's own, and where that is
+  // a wider face than the one the page was laid out in, "PatientScribe" at three
+  // times the text size is wider than the whole of the name's box at a phone's
+  // width, and wider than the opening line's. No layout keeps that word whole
+  // there without setting the text smaller than the size asked for or scrolling
+  // the page sideways, and the page does neither. So a break inside a word
+  // counts against the page only when the word, set unbroken in the same
+  // element, would fit the element's box as it is laid out; a word wider than
+  // that box may break, and every other word still may not. Each break allowed
+  // is recorded, with the word, its width unbroken and the box's, and the run
+  // says how many it allowed. At the default size every word fits its box in
+  // any face, and nothing is allowed there at all. And so that the allowance is
+  // not taken on trust, every reading also breaks a word that fits, in the
+  // opening line, on purpose, and requires that break to be counted.
+  //
   // And at the default size the field is the one the page was designed with:
   // its digits half as large again as the text, and spaced apart.
   const seen = watch(page, baseURL);
@@ -3008,16 +3024,54 @@ test('the code-entry surface reflows at three times the text size on a phone, an
       const field = document.getElementById('code-input');
       const fieldStyle = inPage['getComputedStyle'](field);
 
+      /** @param {any} element */
+      const frameOf = (element) => {
+        const style = inPage['getComputedStyle'](element);
+        return ['borderLeftWidth', 'borderRightWidth', 'paddingLeft', 'paddingRight'].reduce(
+          (sum, side) => sum + (Number.parseFloat(String(style[side])) || 0),
+          0,
+        );
+      };
+
       /**
-       * Each place the element's text moves to a new line other than at a space.
+       * The width of the element's content box, as it is laid out.
+       *
+       * @param {any} element
+       */
+      const boxOf = (element) => Number(element.getBoundingClientRect().width) - frameOf(element);
+
+      /**
+       * The width the words take set unbroken in the element, in its own font,
+       * size, weight and spacing, read from the page and the probe taken away.
+       *
+       * @param {any} element
+       * @param {string} words
+       */
+      const unbrokenIn = (element, words) => {
+        const probe = document.createElement('span');
+        probe.style.whiteSpace = 'nowrap';
+        probe.style.display = 'inline-block';
+        probe.textContent = words;
+        element.appendChild(probe);
+        const width = Number(probe.getBoundingClientRect().width);
+        probe.remove();
+        return width;
+      };
+
+      /**
+       * Each place the element's text moves to a new line other than at a space,
+       * in two lists: the breaks inside a word that would fit the element's box
+       * unbroken, which count against the page, and the breaks inside a word
+       * wider than that box, which the page cannot avoid and which are allowed.
        *
        * @param {string} id
-       * @returns {string[]}
+       * @returns {{ inside: string[], allowed: { id: string, word: string, unbroken: number, box: number }[] }}
        */
       const breaksInsideAWord = (id) => {
-        const text = document.getElementById(id).firstChild;
+        const element = document.getElementById(id);
+        const text = element.firstChild;
         const spelled = String(text.textContent);
-        /** @type {string[]} */
+        /** @type {number[]} */
         const found = [];
         /** @type {number | null} */
         let lineTop = null;
@@ -3029,12 +3083,55 @@ test('the code-entry surface reflows at three times the text size on a phone, an
           if (boxes.length === 0) continue;
           const top = Number(/** @type {any} */ (boxes[0]).top);
           if (lineTop !== null && Math.abs(top - lineTop) > 2 && spelled[at - 1] !== ' ' && spelled[at] !== ' ') {
-            found.push(`${spelled.slice(0, at)}|${spelled.slice(at)}`);
+            found.push(at);
           }
           lineTop = top;
         }
-        return found;
+        // Read after the walk, so the probe is never in the element while its
+        // lines are being read.
+        const box = boxOf(element);
+        /** @type {string[]} */
+        const inside = [];
+        /** @type {{ id: string, word: string, unbroken: number, box: number }[]} */
+        const allowed = [];
+        for (const at of found) {
+          const end = spelled.indexOf(' ', at);
+          const word = spelled.slice(spelled.lastIndexOf(' ', at - 1) + 1, end === -1 ? spelled.length : end);
+          const unbroken = unbrokenIn(element, word);
+          if (unbroken > box) {
+            allowed.push({ id, word, unbroken, box });
+          } else {
+            inside.push(`${spelled.slice(0, at)}|${spelled.slice(at)}`);
+          }
+        }
+        return { inside, allowed };
       };
+
+      // A word that fits, broken on purpose: the opening line is given exactly
+      // the width of its first word, a space and the next word's first letter,
+      // and allowed to break anywhere, so its first line ends inside that next
+      // word, which fits the box. That break has to be counted.
+      const opening = document.getElementById('shell-intro');
+      const [first = '', next = ''] = String(opening.firstChild.textContent).split(' ');
+      const firstLine = `${first} ${next.slice(0, 1)}`;
+      const asWritten = ['width', 'word-break'].map((property) => ({
+        property,
+        value: String(opening.style.getPropertyValue(property)),
+        priority: String(opening.style.getPropertyPriority(property)),
+      }));
+      opening.style.setProperty('width', `${unbrokenIn(opening, firstLine) + frameOf(opening) + 0.5}px`);
+      opening.style.setProperty('word-break', 'break-all');
+      const brokenOnPurpose = breaksInsideAWord('shell-intro').inside;
+      // Put back property by property: one engine leaves the declarations in
+      // place when the attribute is set back to the value it already reads.
+      for (const { property, value, priority } of asWritten) {
+        if (value === '') opening.style.removeProperty(property);
+        else opening.style.setProperty(property, value, priority);
+      }
+
+      const control = breaksInsideAWord('code-submit');
+      const name = breaksInsideAWord('brand');
+      const line = breaksInsideAWord('shell-intro');
 
       return {
         textSize: Number.parseFloat(String(inPage['getComputedStyle'](document.documentElement).fontSize)),
@@ -3042,21 +3139,36 @@ test('the code-entry surface reflows at three times the text size on a phone, an
         digitSpacing: Number.parseFloat(String(fieldStyle.letterSpacing)) || 0,
         held: Number(field.scrollWidth),
         shown: Number(field.clientWidth),
-        control: breaksInsideAWord('code-submit'),
-        name: breaksInsideAWord('brand'),
-        opening: breaksInsideAWord('shell-intro'),
+        control: control.inside,
+        name: name.inside,
+        opening: line.inside,
+        allowed: [...control.allowed, ...name.allowed, ...line.allowed],
+        brokenOnPurpose,
+        firstLine,
       };
     });
+
+  /** @type {string[]} */
+  const allowedBreaks = [];
 
   /** @param {string} where */
   const expectTheWholeCode = async (where) => {
     await page.locator('#code-input').fill(codeOfTheHintsLength);
     const read = await fitting();
+    expect(
+      read.brokenOnPurpose.some((one) => one.startsWith(`${read.firstLine}|`)),
+      `a word that fits, broken on purpose in the opening line, is not counted ${where}`,
+    ).toBe(true);
     expect(read.held, `the field hides part of a typed code ${where}`).toBeLessThanOrEqual(read.shown);
     expect(read.digitSize, `the field's digits are smaller than the text ${where}`).toBeGreaterThanOrEqual(read.textSize);
     expect(read.control, `the control's words break inside a word ${where}`).toEqual([]);
     expect(read.name, `the name breaks inside the word ${where}`).toEqual([]);
     expect(read.opening, `the line that opens the surface breaks inside a word ${where}`).toEqual([]);
+    for (const one of read.allowed) {
+      const record = `#${one.id} breaks "${one.word}" ${where}: ${one.unbroken.toFixed(2)}px unbroken, in a box ${one.box.toFixed(2)}px wide`;
+      allowedBreaks.push(record);
+      test.info().annotations.push({ type: 'break allowed', description: record });
+    }
     return read;
   };
 
@@ -3064,6 +3176,7 @@ test('the code-entry surface reflows at three times the text size on a phone, an
     await page.setViewportSize({ width, height: 800 });
     await openLink(page, fragmentFor(named));
     const read = await expectTheWholeCode(`at ${width}px with the text at its default size`);
+    expect(read.allowed, `a word is wider than its box at ${width}px with the text at its default size`).toEqual([]);
     expect(read.digitSize, `the field's digits are not the designed size at ${width}px`).toBe(read.textSize * 1.5);
     expect(read.digitSpacing, `the field's digits are not spaced as designed at ${width}px`).toBeCloseTo(
       read.digitSize * 0.14,
@@ -3110,6 +3223,11 @@ test('the code-entry surface reflows at three times the text size on a phone, an
     await expect(page.locator('#code-submit')).toBeVisible();
     await expectTheWholeCode(`after a code that did not match, at ${width}px with the text at ${size}`);
   }
+
+  // Recorded as well as allowed, so a run shows what the allowance let through.
+  const tally = `breaks inside a word allowed (${test.info().project.name}): ${allowedBreaks.length}`;
+  process.stdout.write(`${[tally, ...allowedBreaks.map((one) => `  ${one}`)].join('\n')}\n`);
+  test.info().annotations.push({ type: 'breaks allowed', description: String(allowedBreaks.length) });
 
   expect(seen.errors).toEqual([]);
   expect(seen.all).toEqual([]);
