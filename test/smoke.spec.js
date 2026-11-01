@@ -217,13 +217,14 @@ const ICON_STROKES = Object.freeze({
  * What makes one enough is what the viewer is allowed to do to this tree. Every
  * element below is written in `index.html`; the renderer adds none of them and
  * removes none of them. It writes text into elements that are already here, it
- * moves two attributes on them, and for the body of a note it creates a heading,
- * a list and the list's items and writes text into those. The two attributes are
- * `hidden`, on everything the page shows and hides — the state sections, the
- * advisory, the two chips and the report control — and `disabled`, on the two
- * controls, which is what a request in flight and a link already reported look
- * like. Neither of them carries a destination, and both are moved by the property
- * rather than by a call.
+ * moves three attributes on them, and for the body of a note it creates a
+ * heading, a list and the list's items and writes text into those. The three
+ * attributes are `hidden`, on everything the page shows and hides — the state
+ * sections, the advisory, the two chips, the report control and its panel —
+ * `disabled`, on the two controls that send something, which is what a request
+ * in flight and a link already reported look like, and `aria-expanded`, on the
+ * control that opens the panel. None of them carries a destination, and all
+ * three are moved by the property rather than by a call.
  *
  * What stands behind that is a scan over every served file, and which half of it
  * does what is worth saying plainly. The call that sets an attribute is refused
@@ -239,17 +240,19 @@ const ICON_STROKES = Object.freeze({
  * property anywhere could carry one.
  *
  * Between any two of this page's surfaces the differences are therefore which
- * elements carry `hidden`, which controls carry `disabled`, what text is inside
- * them, and whether a note's body holds those three tag names.
+ * elements carry `hidden`, which controls carry `disabled`, what `aria-expanded`
+ * says, what text is inside them, and whether a note's body holds those three tag
+ * names.
  *
  * Each of those is read somewhere else. The `hidden` pattern of every surface is
  * in the pinned snapshots in `test/viewer.spec.js`, one per state, and so is the
  * text; a disabled control is in the snapshot of the surface that has one, and in
- * the reading that presses the report control; the notice's own words are read out
- * of the elements they are written into; a note's body is in the snapshot that file
+ * the reading that presses the panel's button; what `aria-expanded` says is in the
+ * snapshots of the open panel and the reading of it from the keyboard; the notice's
+ * own words are read out of the elements they are written into; a note's body is in the snapshot that file
  * builds at run time from the document that was sealed. What this inventory adds is
  * the half none of those can see — the attributes, and so the destinations — and one
- * state is enough for that because every attribute below other than those two is
+ * state is enough for that because every attribute below other than those three is
  * the same in all of them.
  *
  * What it does not cover, said rather than left to be assumed: an attribute on an
@@ -352,7 +355,14 @@ const PAGE_ELEMENTS = [
   { tag: 'span', attributes: { id: 'notice-lead' } },
   { tag: 'a', attributes: { id: 'policy-link', href: 'https://patientscribe.com.au/privacy-policy' } },
   { tag: 'span', attributes: { id: 'notice-tail' } },
-  { tag: 'button', attributes: { id: 'report', type: 'button', hidden: '' } },
+  { tag: 'button', attributes: { id: 'report', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'report-panel', hidden: '' } },
+  { tag: 'div', attributes: { id: 'report-panel', hidden: '' } },
+  { tag: 'h2', attributes: { id: 'report-help-heading' } },
+  { tag: 'p', attributes: { id: 'report-help-body' } },
+  { tag: 'h2', attributes: { id: 'report-mistake-heading' } },
+  { tag: 'p', attributes: { id: 'report-mistake-body' } },
+  { tag: 'button', attributes: { id: 'report-mistake', type: 'button', 'aria-describedby': 'report-mistake-body' } },
+  { tag: 'p', attributes: { id: 'report-done', tabindex: '-1', hidden: '' } },
 ];
 
 /**

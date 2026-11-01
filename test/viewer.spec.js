@@ -231,6 +231,63 @@ const UNAVAILABLE_UNNAMED = `- main:
   - group: Your privacy on this page`;
 
 /**
+ * The shell with the report panel open, which is where the control's state shows.
+ *
+ * Every other surface in this file is read with the panel closed, and a closed
+ * panel is not in a snapshot at all, so those surfaces are the same with or
+ * without it.
+ */
+const SHELL_PANEL_OPEN = `- main:
+  - heading "PatientScribe" [level=1]
+  - paragraph: Someone has shared a PatientScribe note with you.
+  - paragraph: They'll have given you a code \u2014 usually over the phone.
+  - text: Code
+  - paragraph: The code is 8 numbers.
+  - textbox "Code"
+  - button "Open the note"
+  - status
+  - group: Your privacy on this page
+  - button "Report a problem with this link" [expanded]
+  - heading "Can't open the note?" [level=2]
+  - paragraph: The person who shared it can tell you the code again, or send you a new link.
+  - heading "Sent to you by mistake?" [level=2]
+  - paragraph: You can turn this link off. It will stop working for everyone, including you. This can't be undone.
+  - button "Turn this link off"`;
+
+/** The same, once the panel's button is pressed: the one line where the explanation and the button were. */
+const SHELL_PANEL_PRESSED = `- main:
+  - heading "PatientScribe" [level=1]
+  - paragraph: Someone has shared a PatientScribe note with you.
+  - paragraph: They'll have given you a code \u2014 usually over the phone.
+  - text: Code
+  - paragraph: The code is 8 numbers.
+  - textbox "Code"
+  - button "Open the note"
+  - status
+  - group: Your privacy on this page
+  - button "Report a problem with this link" [expanded]
+  - heading "Can't open the note?" [level=2]
+  - paragraph: The person who shared it can tell you the code again, or send you a new link.
+  - heading "Sent to you by mistake?" [level=2]
+  - paragraph: Thank you. You can close this page.`;
+
+/**
+ * The words of the report panel, each with the element it is written into,
+ * transcribed from the agreed text rather than read from the viewer, for the
+ * reason the notice below gives.
+ */
+const REPORT_CONTROL = 'Report a problem with this link';
+const PANEL_HELP = [
+  ['#report-help-heading', "Can't open the note?"],
+  ['#report-help-body', 'The person who shared it can tell you the code again, or send you a new link.'],
+  ['#report-mistake-heading', 'Sent to you by mistake?'],
+];
+const PANEL_MISTAKE_BODY =
+  "You can turn this link off. It will stop working for everyone, including you. This can't be undone.";
+const PANEL_MISTAKE_BUTTON = 'Turn this link off';
+const PANEL_DONE = 'Thank you. You can close this page.';
+
+/**
  * The collection notice, transcribed from the agreed text rather than read from
  * the viewer.
  *
@@ -491,10 +548,11 @@ async function sealedWithoutAName(fixture) {
  * is the reason this needs to be told where the harness serves from.
  *
  * @param {string} origin Where the harness serves the page from.
+ * @param {string} path The path of the request a test drives to a failure.
  * @returns {readonly { text: string, from: string }[]}
  */
-function browserNetworkLines(origin) {
-  const request = `${origin}/prod/share/open`;
+function browserNetworkLines(origin, path) {
+  const request = `${origin}${path}`;
   return [
     { text: 'error: Failed to load resource: net::ERR_FAILED', from: request },
     { text: 'error: Failed to load resource: the server responded with a status of 400 (Bad Request)', from: request },
@@ -544,11 +602,12 @@ function browserNetworkLines(origin) {
  *
  * @param {import('@playwright/test').Page} page
  * @param {string | undefined} baseURL The origin the harness serves from.
+ * @param {string} [path] The path of the request the test drives to a failure.
  * @returns {{ all: string[], unaccounted: string[], errors: string[] }}
  */
-function watch(page, baseURL) {
+function watch(page, baseURL, path = '/prod/share/open') {
   expect(baseURL, 'the harness ran with no base URL, so the lines to subtract cannot be built').toBeTruthy();
-  const browsers = browserNetworkLines(baseURL ?? '');
+  const browsers = browserNetworkLines(baseURL ?? '', path);
   /** @type {string[]} */
   const all = [];
   /** @type {string[]} */
@@ -1890,21 +1949,13 @@ test('a browser that refuses to rewrite the address still draws its surface and 
 test('reporting a link sends the identifier and nothing else', async ({ page, baseURL }) => {
   const seen = watch(page, baseURL);
 
-  /** @type {{ method: string, type: string | undefined, body: string | null }[]} */
-  const reports = [];
-  await page.route(shareReportAt(baseURL), (route) => {
-    const request = route.request();
-    reports.push({
-      method: request.method(),
-      type: request.headers()['content-type'],
-      body: request.postData(),
-    });
-    return route.fulfill({ status: 204, body: '' });
-  });
+  const reports = await recordReports(page, baseURL);
 
   await openLink(page, fragmentFor(named));
   await page.locator('#report').click();
-  await expect(page.locator('#report')).toBeDisabled();
+  await page.locator('#report-mistake').click();
+  await expect(page.locator('#report-mistake')).toBeDisabled();
+  await expect(page.locator('#report')).toBeEnabled();
   await expect.poll(() => reports.length).toBe(1);
 
   const [only] = reports;
@@ -1912,9 +1963,9 @@ test('reporting a link sends the identifier and nothing else', async ({ page, ba
   expect(only?.type).toBe('application/json');
   expect(only?.body).toBe(`{"id":"${named.inputs.id}"}`);
 
-  // Once. The control disables itself the moment it is used, so a second press
-  // is not a second report.
-  await page.locator('#report').click({ force: true });
+  // Once. The button disables itself the moment it is used, so a second press
+  // is not a second report, even one no pointer could make on a hidden button.
+  await pressFromScript(page, '#report-mistake');
   await page.waitForTimeout(150);
   expect(reports.length).toBe(1);
 
@@ -2614,6 +2665,23 @@ test('every text on every surface reaches the contrast it has to', async ({ page
   expect(await measure(['code-hint', 'code-submit']), 'a code being checked').toEqual([]);
   held.go();
   await expect(page.locator('#wrong-code')).toHaveText(WRONG_CODE_LINE);
+
+  // And the report panel, in both of the states it can show, read on the page
+  // the words and the button are drawn on: the white card of the panel, and the
+  // tint of the one line. Each of these is required to be on screen, so a panel
+  // that drew nothing is a failure rather than a skip.
+  await recordReports(page, baseURL);
+  const panelHelp = ['report-help-heading', 'report-help-body', 'report-mistake-heading'];
+  await openLink(page, fragmentFor(named));
+  await openTheNotice(page);
+  await page.locator('#report').click();
+  expect(
+    await measure(['report', ...panelHelp, 'report-mistake-body', 'report-mistake']),
+    'the report panel, open',
+  ).toEqual([]);
+  await page.locator('#report-mistake').click();
+  await expect(page.locator('#report-done')).toBeVisible();
+  expect(await measure(['report', ...panelHelp, 'report-done']), 'the report panel, after the press').toEqual([]);
 
   await openLink(page, '#not-a-link');
   await openTheNotice(page);
@@ -3631,6 +3699,841 @@ test('the control that sends a code stays still for anyone who has asked for les
   held.go();
   await expect(page.locator('#wrong-code')).toHaveText(WRONG_CODE_LINE);
   await expect(page.locator('#code-submit')).toBeEnabled();
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+/**
+ * The report path, answered and recorded.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string | undefined} baseURL
+ * @returns {Promise<{ method: string, type: string | undefined, body: string | null }[]>}
+ */
+async function recordReports(page, baseURL) {
+  /** @type {{ method: string, type: string | undefined, body: string | null }[]} */
+  const reports = [];
+  await page.route(shareReportAt(baseURL), (route) => {
+    const request = route.request();
+    reports.push({
+      method: request.method(),
+      type: request.headers()['content-type'],
+      body: request.postData(),
+    });
+    return route.fulfill({ status: 204, body: '' });
+  });
+  return reports;
+}
+
+/**
+ * Press a button from the page's own script.
+ *
+ * Which reaches a button no pointer can reach, so what stops the press is the
+ * button being disabled rather than the button being out of sight.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string} selector
+ * @returns {Promise<void>}
+ */
+async function pressFromScript(page, selector) {
+  await page.locator(selector).evaluate((button) => {
+    /** @type {any} */ (button).click();
+  });
+}
+
+/**
+ * The four surfaces that carry the report control, each reached from a load of
+ * its own, with what the share answers set for the one being reached.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @param {string | undefined} baseURL
+ * @returns {Promise<[string, () => Promise<void>][]>}
+ */
+async function surfacesWithTheControl(page, baseURL) {
+  /** @type {{ body: string }} */
+  const answer = { body: '' };
+  await page.route(shareOpenAt(baseURL), (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: answer.body }),
+  );
+
+  /**
+   * @param {string} body
+   * @param {string} shown
+   * @returns {() => Promise<void>}
+   */
+  const afterACode = (body, shown) => async () => {
+    answer.body = body;
+    await openLink(page, fragmentFor(named));
+    await enterCode(page);
+    await expect(page.locator(shown)).toBeVisible();
+  };
+
+  return [
+    [
+      'the code-entry surface',
+      async () => {
+        await openLink(page, fragmentFor(named));
+        await expect(page.locator('#shell')).toBeVisible();
+      },
+    ],
+    ['a code that did not match', afterACode('{"status":"wrong_code"}', '#wrong-code')],
+    ['the page every failure ends on', afterACode('{"status":"unavailable"}', '#unavailable')],
+    ['a decrypted note', afterACode(shareBody(named), '#note')],
+  ];
+}
+
+/**
+ * Whether the panel is closed and what the control says about it, by what the
+ * viewer writes rather than by what is on screen. Under a hidden footer an open
+ * panel and a closed one both show nothing, and only this can tell them apart.
+ *
+ * @param {import('@playwright/test').Page} page
+ * @returns {Promise<{ panelHidden: boolean, expanded: string | null, controlHidden: boolean }>}
+ */
+function panelState(page) {
+  return page.evaluate(() => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    const control = inPage['document'].getElementById('report');
+    const panel = inPage['document'].getElementById('report-panel');
+    return {
+      panelHidden: panel.hidden === true,
+      expanded: control.getAttribute('aria-expanded'),
+      controlHidden: control.hidden === true,
+    };
+  });
+}
+
+/**
+ * How the words of the report panel sit in their boxes, at whatever the window
+ * and the text size are now.
+ *
+ * What it asks is what the test of the code-entry surface asks of the name, with
+ * the same allowance: a break inside a word counts against the page only when
+ * the word, set unbroken in the same element, would fit that element's box as it
+ * is laid out. No width is written here, because a width measured in one face is
+ * wrong in the next. And as there, a word that fits is broken on purpose, in the
+ * panel's first heading, and that break is required to be counted.
+ *
+ * Runs in the page, so it is one function holding everything it uses.
+ *
+ * @param {readonly string[]} ids The elements on screen, each holding only text.
+ */
+function readPanelLayout(ids) {
+  const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+  const document = inPage['document'];
+  const root = document.documentElement;
+  const width = Number(root.clientWidth);
+
+  /** @param {any} element */
+  const frameOf = (element) => {
+    const style = inPage['getComputedStyle'](element);
+    return ['borderLeftWidth', 'borderRightWidth', 'paddingLeft', 'paddingRight'].reduce(
+      (sum, side) => sum + (Number.parseFloat(String(style[side])) || 0),
+      0,
+    );
+  };
+
+  /**
+   * @param {any} element
+   * @param {string} words
+   */
+  const unbrokenIn = (element, words) => {
+    const probe = document.createElement('span');
+    probe.style.whiteSpace = 'nowrap';
+    probe.style.display = 'inline-block';
+    probe.textContent = words;
+    element.appendChild(probe);
+    const taken = Number(probe.getBoundingClientRect().width);
+    probe.remove();
+    return taken;
+  };
+
+  /**
+   * @param {string} id
+   * @returns {{ inside: string[], allowed: { id: string, word: string, unbroken: number, box: number }[] }}
+   */
+  const breaksInsideAWord = (id) => {
+    const element = document.getElementById(id);
+    const text = element.firstChild;
+    const spelled = String(text.textContent);
+    /** @type {number[]} */
+    const found = [];
+    /** @type {number | null} */
+    let lineTop = null;
+    for (let at = 0; at < spelled.length; at += 1) {
+      const range = document.createRange();
+      range.setStart(text, at);
+      range.setEnd(text, at + 1);
+      const boxes = Array.from(range.getClientRects()).filter((/** @type {any} */ box) => Number(box.width) > 0);
+      if (boxes.length === 0) continue;
+      const top = Number(/** @type {any} */ (boxes[0]).top);
+      if (lineTop !== null && Math.abs(top - lineTop) > 2 && spelled[at - 1] !== ' ' && spelled[at] !== ' ') {
+        found.push(at);
+      }
+      lineTop = top;
+    }
+    // Read after the walk, so the probe is never in the element while its lines
+    // are being read.
+    const box = Number(element.getBoundingClientRect().width) - frameOf(element);
+    /** @type {string[]} */
+    const inside = [];
+    /** @type {{ id: string, word: string, unbroken: number, box: number }[]} */
+    const allowed = [];
+    for (const at of found) {
+      const end = spelled.indexOf(' ', at);
+      const word = spelled.slice(spelled.lastIndexOf(' ', at - 1) + 1, end === -1 ? spelled.length : end);
+      const unbroken = unbrokenIn(element, word);
+      if (unbroken > box) {
+        allowed.push({ id, word, unbroken, box });
+      } else {
+        inside.push(`${spelled.slice(0, at)}|${spelled.slice(at)}`);
+      }
+    }
+    return { inside, allowed };
+  };
+
+  // A word that fits, broken on purpose: the heading is given exactly the width
+  // of its first word, a space and the next word's first letter, and allowed to
+  // break anywhere, so its first line ends inside that next word.
+  const heading = document.getElementById('report-help-heading');
+  const [first = '', next = ''] = String(heading.firstChild.textContent).split(' ');
+  const firstLine = `${first} ${next.slice(0, 1)}`;
+  heading.style.setProperty('width', `${unbrokenIn(heading, firstLine) + frameOf(heading) + 0.5}px`);
+  heading.style.setProperty('word-break', 'break-all');
+  const brokenOnPurpose = breaksInsideAWord('report-help-heading').inside;
+  heading.style.removeProperty('width');
+  heading.style.removeProperty('word-break');
+
+  /** @type {string[]} */
+  const noBox = [];
+  /** @type {string[]} */
+  const outOfView = [];
+  /** @type {string[]} */
+  const clipped = [];
+  /** @type {string[]} */
+  const inside = [];
+  /** @type {{ id: string, word: string, unbroken: number, box: number }[]} */
+  const allowed = [];
+  for (const id of ['report-panel', ...ids]) {
+    const element = document.getElementById(id);
+    const box = element.getBoundingClientRect();
+    if (!(Number(box.width) > 0 && Number(box.height) > 0)) {
+      noBox.push(id);
+      continue;
+    }
+    if (Number(box.left) < -0.5 || Number(box.right) > width + 0.5) {
+      outOfView.push(`${id}: ${Number(box.left).toFixed(2)} to ${Number(box.right).toFixed(2)} in ${width}`);
+    }
+    if (id === 'report-panel') {
+      continue;
+    }
+
+    // Sideways for everything, and up and down for the button alone: a line of
+    // text may stand a little taller than its line height in some faces, and
+    // nothing here clips that, but a button's text has to stay inside the button.
+    const all = document.createRange();
+    all.selectNodeContents(element);
+    for (const line of Array.from(all.getClientRects())) {
+      const one = /** @type {any} */ (line);
+      const beyondTheSides = Number(one.left) < Number(box.left) - 0.5 || Number(one.right) > Number(box.right) + 0.5;
+      const beyondTheEnds = Number(one.top) < Number(box.top) - 0.5 || Number(one.bottom) > Number(box.bottom) + 0.5;
+      if (beyondTheSides || (id === 'report-mistake' && beyondTheEnds)) {
+        clipped.push(id);
+        break;
+      }
+    }
+
+    const breaks = breaksInsideAWord(id);
+    inside.push(...breaks.inside);
+    allowed.push(...breaks.allowed);
+  }
+
+  return {
+    sideways: Number(root.scrollWidth) - Number(root.clientWidth),
+    noBox,
+    outOfView,
+    clipped,
+    inside,
+    allowed,
+    brokenOnPurpose,
+    firstLine,
+  };
+}
+
+test('opening and closing the report panel sends nothing, on every surface that has its control', async ({
+  page,
+  baseURL,
+}) => {
+  // The control used to send. Now it changes what is on screen and that is all,
+  // so every request the page makes while it is used is read, not just reports:
+  // nothing is expected, of any kind, to anywhere.
+  const seen = watch(page, baseURL);
+  const reports = await recordReports(page, baseURL);
+  const surfaces = await surfacesWithTheControl(page, baseURL);
+
+  for (const [surface, reach] of surfaces) {
+    await reach();
+    await expect(page.locator('#report-panel'), `${surface}: the panel starts open`).toBeHidden();
+
+    const asked = traffic.get(page)?.asked ?? [];
+    const before = asked.length;
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel'), `${surface}: the control opens nothing`).toBeVisible();
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel'), `${surface}: the control closes nothing`).toBeHidden();
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel')).toBeVisible();
+    await page.waitForTimeout(150);
+    expect(asked.slice(before), `${surface}: the page asked for something`).toEqual([]);
+    expect(reports, `${surface}: a report went out`).toEqual([]);
+  }
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the button in the report panel sends the identifier and nothing else, and sends it once', async ({
+  page,
+  baseURL,
+}) => {
+  // On each surface, from a load of its own. A double click is the press a
+  // recipient makes, and the second half of it lands wherever the page has moved
+  // to by then; closing and reopening is what a recipient does next.
+  const seen = watch(page, baseURL);
+  const reports = await recordReports(page, baseURL);
+  const surfaces = await surfacesWithTheControl(page, baseURL);
+
+  for (const [surface, reach] of surfaces) {
+    await reach();
+    reports.length = 0;
+
+    await page.locator('#report').click();
+    await page.locator('#report-mistake').dblclick();
+    await expect.poll(() => reports.length, `${surface}: no report went out`).toBe(1);
+
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel')).toBeHidden();
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel')).toBeVisible();
+    await pressFromScript(page, '#report-mistake');
+    await page.waitForTimeout(150);
+    expect(reports.length, `${surface}: more than one report went out`).toBe(1);
+
+    const [only] = reports;
+    expect(only?.method).toBe('POST');
+    expect(only?.type).toBe('application/json');
+    expect(only?.body).toBe(`{"id":"${named.inputs.id}"}`);
+    expect(Object.keys(JSON.parse(only?.body ?? '{}')), `${surface}: a report carried a second key`).toEqual(['id']);
+  }
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the line the button in the report panel leaves is the same whatever happens to the request', async ({
+  page,
+  baseURL,
+}) => {
+  // Each ending a request can have, and the whole surface compared to one pin
+  // after each of them. The line is drawn from the press, so what follows the
+  // press cannot move it, and a page that showed one line for an answer and
+  // another for none would be telling a recipient which of the two happened.
+  //
+  // The browser reports on the requests made to fail here, so those lines come out
+  // of the reading, whole and against the report path, and what is left is read.
+  const seen = watch(page, baseURL, '/prod/share/report');
+
+  /** @type {import('@playwright/test').Route[]} */
+  const unanswered = [];
+
+  /** @type {[string, (route: import('@playwright/test').Route) => Promise<void>][]} */
+  const endings = [
+    ['answers 200', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"ok"}' })],
+    ['answers 500', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })],
+    ['fails on the network', (route) => route.abort()],
+    [
+      'never answers',
+      async (route) => {
+        unanswered.push(route);
+      },
+    ],
+  ];
+
+  /** @type {{ ending: (route: import('@playwright/test').Route) => Promise<void> }} */
+  const now = { ending: async () => {} };
+  await page.route(shareReportAt(baseURL), (route) => now.ending(route));
+
+  for (const [ending, respond] of endings) {
+    now.ending = respond;
+    await openLink(page, fragmentFor(named));
+    await page.locator('#report').click();
+    const sent = page.waitForRequest(shareReportAt(baseURL));
+    await page.locator('#report-mistake').click();
+    await sent;
+
+    await expect(page.locator('#report-done'), `${ending}: the line is not there`).toBeVisible();
+    await page.waitForTimeout(200);
+    expect(await page.locator('#report-done').textContent(), `${ending}: the line is not the line`).toBe(PANEL_DONE);
+    expect(await surfaceOf(page), `${ending}: the surface is not the pinned one`).toBe(SHELL_PANEL_PRESSED);
+  }
+  expect(unanswered.length, 'the request that never answers was never made').toBe(1);
+
+  for (const route of unanswered) {
+    await route.abort();
+  }
+  expect(seen.errors).toEqual([]);
+  expect(seen.unaccounted).toEqual([]);
+});
+
+test('once the button is pressed the control still works, and the panel shows the line and never the button', async ({
+  page,
+  baseURL,
+}) => {
+  // Pressed stays pressed for the life of the document. Two walks across the
+  // surfaces a press can be followed by, because no one walk reaches them all:
+  // a code that did not match and then a note, and the page every failure ends
+  // on, which nothing leaves.
+  const seen = watch(page, baseURL);
+  const reports = await recordReports(page, baseURL);
+
+  /** @type {{ body: string }} */
+  const answer = { body: '' };
+  await page.route(shareOpenAt(baseURL), (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: answer.body }),
+  );
+
+  /** @param {string} where */
+  const expectTheLine = async (where) => {
+    await expect(page.locator('#report-done'), `${where}: the line is not there`).toBeVisible();
+    await expect(page.locator('#report-done')).toHaveText(PANEL_DONE);
+    await expect(page.locator('#report-mistake'), `${where}: the button is back`).toBeHidden();
+    await expect(page.locator('#report-mistake-body'), `${where}: the explanation is back`).toBeHidden();
+    for (const [selector, words] of PANEL_HELP) {
+      await expect(page.locator(String(selector)), `${where}: ${selector} has gone`).toBeVisible();
+      await expect(page.locator(String(selector))).toHaveText(String(words));
+    }
+  };
+
+  /** @param {string} where */
+  const closeAndReopen = async (where) => {
+    await expect(page.locator('#report'), `${where}: the control is disabled`).toBeEnabled();
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel'), `${where}: the control does not close the panel`).toBeHidden();
+    expect((await panelState(page)).expanded).toBe('false');
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel'), `${where}: the control does not open the panel`).toBeVisible();
+    expect((await panelState(page)).expanded).toBe('true');
+    await expectTheLine(where);
+  };
+
+  /** @type {[string, string, string][][]} */
+  const walks = [
+    [
+      ['a code that did not match', '{"status":"wrong_code"}', '#wrong-code'],
+      ['a decrypted note', shareBody(named), '#note'],
+    ],
+    [['the page every failure ends on', '{"status":"unavailable"}', '#unavailable']],
+  ];
+  for (const walk of walks) {
+    await openLink(page, fragmentFor(named));
+    await page.locator('#report').click();
+    await page.locator('#report-mistake').click();
+    await expectTheLine('straight after the press');
+    await closeAndReopen('on the surface it was pressed on');
+
+    for (const [where, body, shown] of walk) {
+      answer.body = body;
+      await enterCode(page);
+      await expect(page.locator(shown)).toBeVisible();
+      await expectTheLine(where);
+      await closeAndReopen(where);
+    }
+  }
+  expect(reports.length, 'nothing above is a second press').toBe(walks.length);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the report panel says the agreed words wherever it is, and is absent where there is no identifier', async ({
+  page,
+  baseURL,
+}) => {
+  // Read off the page, against this file's own transcription, on each surface
+  // that has the control: one panel, the same words on all of them.
+  const seen = watch(page, baseURL);
+  await recordReports(page, baseURL);
+  const surfaces = await surfacesWithTheControl(page, baseURL);
+
+  /**
+   * @param {string} selector
+   * @param {string} words
+   * @param {string} where
+   */
+  const expectWords = async (selector, words, where) => {
+    await expect(page.locator(selector), `${where}: ${selector} is not on the screen`).toBeVisible();
+    expect(await page.locator(selector).textContent(), `${where}: ${selector} does not say the agreed words`).toBe(words);
+  };
+
+  for (const [surface, reach] of surfaces) {
+    await reach();
+    await expectWords('#report', REPORT_CONTROL, surface);
+    await page.locator('#report').click();
+    for (const [selector, words] of PANEL_HELP) {
+      await expectWords(String(selector), String(words), surface);
+    }
+    await expectWords('#report-mistake-body', PANEL_MISTAKE_BODY, surface);
+    await expectWords('#report-mistake', PANEL_MISTAKE_BUTTON, surface);
+    await expect(page.locator('#report-done')).toBeHidden();
+
+    await page.locator('#report-mistake').click();
+    await expectWords('#report-done', PANEL_DONE, surface);
+    for (const [selector, words] of PANEL_HELP) {
+      await expectWords(String(selector), String(words), surface);
+    }
+  }
+
+  /** @param {string} where */
+  const expectNoPanel = async (where) => {
+    await expect(page.locator('#unavailable'), `${where}: this is not the unavailable surface`).toBeVisible();
+    await expect(page.locator('#report'), `${where}: the control is there`).toBeHidden();
+    await expect(page.locator('#report-panel'), `${where}: the panel is there`).toBeHidden();
+    expect(await panelState(page), where).toEqual({ panelHidden: true, expanded: 'false', controlHidden: true });
+    expect(await surfaceOf(page), where).toBe(UNAVAILABLE_UNNAMED);
+  };
+
+  await openLink(page, '#not-a-link');
+  await expectNoPanel('a link that did not parse');
+
+  // Out of the cache, or loaded again if the browser chooses to: the fragment
+  // was scrubbed at boot, so the answer is the same either way.
+  await openLink(page, fragmentFor(named));
+  await page.locator('#report').click();
+  await expect(page.locator('#report-panel')).toBeVisible();
+  await page.goto('/index.html?away=1');
+  await page.goBack();
+  await expectNoPanel('a page that came back');
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('a page put away with the report panel open shows nothing of it, and comes back without it or its control', async ({
+  page,
+  baseURL,
+}) => {
+  // The going and the coming back, each on its own and then the pair, for the
+  // reason `putAwayWithoutReturning` gives: read after the pair, the coming back
+  // hides whatever the going left. And `putAway` dispatches the coming back alone,
+  // which is the only way to ask what it does itself: a browser has always run
+  // the going first, and the going has closed the panel by then.
+  const seen = watch(page, baseURL);
+  await recordReports(page, baseURL);
+
+  /** @param {string} where */
+  const openThePanel = async (where) => {
+    await openLink(page, fragmentFor(named));
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel'), where).toBeVisible();
+    expect(await panelState(page), where).toEqual({ panelHidden: false, expanded: 'true', controlHidden: false });
+  };
+
+  await openThePanel('the going');
+  await putAwayWithoutReturning(page);
+  expect(await showing(page), 'the going left something on screen').toEqual([]);
+  expect(await panelState(page), 'the going left the panel open').toEqual({
+    panelHidden: true,
+    expanded: 'false',
+    controlHidden: false,
+  });
+
+  await openThePanel('the coming back');
+  await putAway(page);
+  await expect(page.locator('#unavailable')).toBeVisible();
+  expect(await panelState(page), 'a page that came back has the panel open').toEqual({
+    panelHidden: true,
+    expanded: 'false',
+    controlHidden: true,
+  });
+  expect(await surfaceOf(page)).toBe(UNAVAILABLE_UNNAMED);
+
+  await openThePanel('the pair, after the press');
+  await page.locator('#report-mistake').click();
+  await expect(page.locator('#report-done')).toBeVisible();
+  await putAwayWithoutReturning(page);
+  expect(await showing(page), 'the going left something on screen after the press').toEqual([]);
+  await putAway(page);
+  await expect(page.locator('#report-panel')).toBeHidden();
+  await expect(page.locator('#report')).toBeHidden();
+  expect(await surfaceOf(page)).toBe(UNAVAILABLE_UNNAMED);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the report panel can be worked from the keyboard, and each control is named by its own words', async ({
+  page,
+  baseURL,
+}) => {
+  // The way a recipient without a pointer comes to it: forward through the page
+  // from the top, the return key on each control, and the focus left on the one
+  // line when the button that had it goes, so that a screen reader's reading
+  // position is on the line rather than lost with the button. That position is
+  // the focus, and no reading here hears anything, so the focus is what is read.
+  //
+  // Forward is the Tab key where that stops at every control. On a Mac an engine
+  // can leave Tab stopping at fields alone, with the Option key added for
+  // everything else, which is that platform's setting rather than this page's;
+  // so whichever of the two reaches the control is the one used from there on.
+  const seen = watch(page, baseURL);
+  const reports = await recordReports(page, baseURL);
+
+  await openLink(page, fragmentFor(named));
+
+  const focusIsOnTheControl = () =>
+    page
+      .locator('#report')
+      .evaluate((element) => element === /** @type {any} */ (element).ownerDocument.activeElement);
+
+  let forward = '';
+  for (const key of ['Tab', 'Alt+Tab']) {
+    for (let press = 0; press < 12 && forward === ''; press += 1) {
+      await page.keyboard.press(key);
+      if (await focusIsOnTheControl()) {
+        forward = key;
+      }
+    }
+  }
+  expect(forward, 'the keyboard never reached the control that opens the panel').not.toBe('');
+  await expect(page.locator('#report')).toHaveAccessibleName(REPORT_CONTROL);
+  await expect(page.locator('#report')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#report')).toHaveAttribute('aria-controls', 'report-panel');
+
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#report-panel')).toBeVisible();
+  await expect(page.locator('#report')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#report'), 'the focus left the control that opened the panel').toBeFocused();
+  await expect(page.locator('#report')).toHaveAccessibleName(REPORT_CONTROL);
+
+  await page.keyboard.press(forward);
+  await expect(page.locator('#report-mistake'), 'the button is not the next stop').toBeFocused();
+  await expect(page.locator('#report-mistake')).toHaveAccessibleName(PANEL_MISTAKE_BUTTON);
+  await expect(page.locator('#report-mistake')).toHaveAccessibleDescription(PANEL_MISTAKE_BODY);
+
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#report-done'), 'the focus is not on the line').toBeFocused();
+  await expect(page.locator('#report-done')).toHaveText(PANEL_DONE);
+  await expect.poll(() => reports.length).toBe(1);
+
+  // The way back is the same control, and the panel closes from the keyboard too.
+  await page.keyboard.press(`Shift+${forward}`);
+  await expect(page.locator('#report')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#report-panel')).toBeHidden();
+  await expect(page.locator('#report')).toHaveAttribute('aria-expanded', 'false');
+  expect(reports.length).toBe(1);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the report panel opens into view, on a note longer than the window and at three times the text size', async ({
+  page,
+  baseURL,
+}) => {
+  // The control is the last thing on the page, with only the page's own padding
+  // under it, so a recipient who has read to the end is looking at the place the
+  // panel opens below. The window is scrolled as far down as it goes before the
+  // press, and that it did scroll is required, or this asks nothing.
+  //
+  // The whole of the heading is asked for rather than any of it: in that padding
+  // the top of a panel left where it opened does reach the window, and shows part
+  // of one line.
+  const seen = watch(page, baseURL);
+  await recordReports(page, baseURL);
+  await page.route(shareOpenAt(baseURL), (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: shareBody(named) }),
+  );
+
+  /** @param {string} where */
+  const expectItOpensIntoView = async (where) => {
+    const scrolled = await page.evaluate(() => {
+      const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+      inPage['scrollTo'](0, inPage['document'].documentElement.scrollHeight);
+      return Number(inPage['scrollY']);
+    });
+    expect(scrolled, `${where}: the surface fits the window, so this asks nothing`).toBeGreaterThan(0);
+
+    await page.locator('#report').click();
+    await expect(page.locator('#report-panel'), where).toBeVisible();
+    await expect(page.locator('#report-help-heading'), `${where}: the panel opened out of sight`).toBeInViewport({
+      ratio: 1,
+    });
+  };
+
+  // A note taller than the window in whatever face a device has: the published
+  // note is only a little taller than a phone's, so this window is shorter than one.
+  await page.setViewportSize({ width: 375, height: 480 });
+  await openLink(page, fragmentFor(named));
+  await enterCode(page);
+  await expect(page.locator('#note')).toBeVisible();
+  await expectItOpensIntoView('on a decrypted note');
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openLink(page, fragmentFor(named));
+  await page.evaluate(() => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    inPage['document'].documentElement.style.fontSize = '300%';
+  });
+  await expectItOpensIntoView('on the code-entry surface at three times the text size');
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('a report can outlive the page that sent it', async ({ page, baseURL }) => {
+  // The line tells a recipient they can close this page, and it is on the screen
+  // before anything has been sent, so the request has to be one a browser can
+  // finish after the page has gone. What is read here is what the page asks for,
+  // as it was handed to `fetch`, because the request seen from outside does not
+  // say. No reading here closes a page on a request in flight.
+  const seen = watch(page, baseURL);
+  await recordReports(page, baseURL);
+  await page.addInitScript(() => {
+    const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+    const send = inPage['fetch'];
+    /** @type {unknown[]} */
+    const asked = [];
+    inPage['askedOfFetch'] = asked;
+    inPage['fetch'] = (/** @type {unknown} */ to, /** @type {any} */ init) => {
+      asked.push({ to: String(to), keepalive: init?.keepalive });
+      return send.call(inPage, to, init);
+    };
+  });
+
+  await openLink(page, fragmentFor(named));
+  await page.locator('#report').click();
+  await page.locator('#report-mistake').click();
+  await expect(page.locator('#report-done')).toBeVisible();
+
+  const asked = await page.evaluate(() => /** @type {any} */ (/** @type {unknown} */ (globalThis))['askedOfFetch']);
+  expect(asked).toEqual([{ to: shareReportAt(baseURL), keepalive: true }]);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the report panel is the surface it is pinned to be, open and after its button is pressed', async ({
+  page,
+  baseURL,
+}) => {
+  const seen = watch(page, baseURL);
+  await recordReports(page, baseURL);
+
+  await openLink(page, fragmentFor(named));
+  expect(await surfaceOf(page)).toBe(SHELL);
+
+  await page.locator('#report').click();
+  await expect(page.locator('#report-panel')).toBeVisible();
+  expect(await surfaceOf(page)).toBe(SHELL_PANEL_OPEN);
+
+  await page.locator('#report-mistake').click();
+  await expect(page.locator('#report-done')).toBeVisible();
+  expect(await surfaceOf(page)).toBe(SHELL_PANEL_PRESSED);
+
+  expect(seen.errors).toEqual([]);
+  expect(seen.all).toEqual([]);
+});
+
+test('the report panel reflows at twice and three times the text size on a phone, in whatever face the device has', async ({
+  page,
+  baseURL,
+}) => {
+  // At the widths the tests of the page and of the code-entry surface read, and
+  // at both of the sizes a phone's browser is asked for, with the panel open and
+  // after its button is pressed, because the two are laid out differently and
+  // the second has the tinted line in it.
+  //
+  // In the page's own face and then with the whole page set in Verdana, whose
+  // letters are wider. Where a device has no Verdana the second reading falls
+  // back to that device's own sans-serif, and everything asked here has to be
+  // true there as well, so nothing here is a width: `readPanelLayout` measures
+  // what it reads, and a word wider than its line may break whatever the face.
+  // Each break allowed is recorded and the run says how many, as the test of the
+  // code-entry surface does.
+  const seen = watch(page, baseURL);
+  await recordReports(page, baseURL);
+
+  const open = ['report', 'report-help-heading', 'report-help-body', 'report-mistake-heading', 'report-mistake-body', 'report-mistake'];
+  const pressed = ['report', 'report-help-heading', 'report-help-body', 'report-mistake-heading', 'report-done'];
+
+  /** @type {string[]} */
+  const allowedBreaks = [];
+
+  /**
+   * @param {readonly string[]} ids
+   * @param {string} where
+   */
+  const expectItFits = async (ids, where) => {
+    const read = await page.evaluate(readPanelLayout, ids);
+    expect(
+      read.brokenOnPurpose.some((one) => one.startsWith(`${read.firstLine}|`)),
+      `a word that fits, broken on purpose in the first heading, is not counted ${where}`,
+    ).toBe(true);
+    expect(read.sideways, `the page scrolls sideways ${where}`).toBeLessThanOrEqual(0);
+    expect(read.noBox, `these have no box ${where}`).toEqual([]);
+    expect(read.outOfView, `these leave the window ${where}`).toEqual([]);
+    expect(read.clipped, `these do not hold their text ${where}`).toEqual([]);
+    expect(read.inside, `these break inside a word that fits ${where}`).toEqual([]);
+    for (const one of read.allowed) {
+      const record = `#${one.id} breaks "${one.word}" ${where}: ${one.unbroken.toFixed(2)}px unbroken, in a box ${one.box.toFixed(2)}px wide`;
+      allowedBreaks.push(record);
+      test.info().annotations.push({ type: 'break allowed', description: record });
+    }
+  };
+
+  /** @type {[number, number, string][]} */
+  const settings = [
+    [402, 874, '300%'],
+    [375, 812, '300%'],
+    [320, 640, '300%'],
+    [402, 874, '200%'],
+    [375, 812, '200%'],
+    [320, 640, '200%'],
+    [640, 512, '200%'],
+  ];
+  for (const [face, family] of [
+    ['the face the page names', ''],
+    ['Verdana', 'Verdana, sans-serif'],
+  ]) {
+    for (const [width, height, size] of settings) {
+      const where = `at ${width}px with the text at ${size}, in ${face}`;
+      await page.setViewportSize({ width, height });
+      await openLink(page, fragmentFor(named));
+      await page.evaluate(
+        ([textSize, faces]) => {
+          const inPage = /** @type {Record<string, any>} */ (/** @type {unknown} */ (globalThis));
+          inPage['document'].documentElement.style.fontSize = String(textSize);
+          inPage['document'].body.style.fontFamily = String(faces);
+        },
+        [size, family],
+      );
+
+      await page.locator('#report').click();
+      await expect(page.locator('#report-mistake')).toBeVisible();
+      await expectItFits(open, `with the panel open ${where}`);
+
+      await page.locator('#report-mistake').click();
+      await expect(page.locator('#report-done')).toBeVisible();
+      await expectItFits(pressed, `after the press ${where}`);
+    }
+  }
+
+  // Recorded as well as allowed, so a run shows what the allowance let through.
+  const tally = `breaks inside a word allowed in the report panel (${test.info().project.name}): ${allowedBreaks.length}`;
+  process.stdout.write(`${[tally, ...allowedBreaks.map((one) => `  ${one}`)].join('\n')}\n`);
+  test.info().annotations.push({ type: 'breaks allowed in the panel', description: String(allowedBreaks.length) });
 
   expect(seen.errors).toEqual([]);
   expect(seen.all).toEqual([]);

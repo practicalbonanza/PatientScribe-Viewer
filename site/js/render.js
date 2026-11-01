@@ -4,10 +4,13 @@
  * The only module permitted to write to the DOM. Everything a recipient sees is
  * written from here, and the rules it writes under are narrow on purpose: text
  * into elements, the `hidden` property to decide which of them are on screen,
- * and one move of the focus — to the code field, after a code that did not
- * match, or a press with nothing typed. It must not accept markup, must not
- * build markup, must not linkify, must not construct a URL or a style from
- * anything a document carried, and must offer nothing to save or print.
+ * the `ariaExpanded` property of the control that opens the report panel, two
+ * moves of the focus — to the code field, after a code that did not match or a
+ * press with nothing typed, and to the one line the panel's button leaves — and
+ * one move of the page, which brings the report panel into view as it opens.
+ * It must not accept markup, must not build markup, must not linkify, must not
+ * construct a URL or a style from anything a document carried, and must offer
+ * nothing to save or print.
  *
  * The page is static. `index.html` carries every element of every state, with
  * the ones that are not the neutral base marked hidden, and this module reveals
@@ -114,6 +117,13 @@ const SELECTORS = Object.freeze({
   policyLink: '#policy-link',
   noticeTail: '#notice-tail',
   report: '#report',
+  reportPanel: '#report-panel',
+  reportHelpHeading: '#report-help-heading',
+  reportHelpBody: '#report-help-body',
+  reportMistakeHeading: '#report-mistake-heading',
+  reportMistakeBody: '#report-mistake-body',
+  reportMistake: '#report-mistake',
+  reportDone: '#report-done',
 });
 
 /**
@@ -150,6 +160,13 @@ const SELECTORS = Object.freeze({
  * @property {HTMLElement} policyLink
  * @property {HTMLElement} noticeTail
  * @property {HTMLButtonElement} report
+ * @property {HTMLElement} reportPanel
+ * @property {HTMLElement} reportHelpHeading
+ * @property {HTMLElement} reportHelpBody
+ * @property {HTMLElement} reportMistakeHeading
+ * @property {HTMLElement} reportMistakeBody
+ * @property {HTMLButtonElement} reportMistake
+ * @property {HTMLElement} reportDone
  */
 
 /**
@@ -203,14 +220,15 @@ export function clearRoot(node) {
  * Find every region of the page, or refuse.
  *
  * Whole or nothing: a page missing one region is not a page this module can
- * drive, and half a surface is worse than none. The two regions whose type
- * matters beyond being an element are checked for the property that makes them
- * that type — a field has a string value and a focus that can be called, a
- * control has a boolean disabled state — so the shapes this module goes on to
- * use are shapes it has looked at. The field's focus is looked at because this
- * module calls it, and a call to something that is not a function throws. The
- * call itself is guarded as well, because a call to something that is can still
- * throw.
+ * drive, and half a surface is worse than none. The regions whose type matters
+ * beyond being an element are checked for the property that makes them that
+ * type — a field has a string value and a focus that can be called, the line the
+ * panel's button leaves has that same focus, the panel has a `scrollIntoView`
+ * that can be called, a control has a boolean disabled state — so the shapes this
+ * module goes on to use are shapes it has looked at. Each of those calls is looked
+ * at because this module makes it, and a call to something that is not a function
+ * throws. The call itself is guarded as well, because a call to something that is
+ * can still throw.
  *
  * Guarded throughout, because the value handed in is whatever a caller passed
  * and a hostile one can throw when it is looked at.
@@ -246,10 +264,15 @@ export function readPage(root) {
     if (typeof /** @type {Record<string, unknown>} */ (found['codeInput'])['value'] !== 'string') {
       return null;
     }
-    if (typeof /** @type {Record<string, unknown>} */ (found['codeInput'])['focus'] !== 'function') {
+    for (const name of ['codeInput', 'reportDone']) {
+      if (typeof /** @type {Record<string, unknown>} */ (found[name])['focus'] !== 'function') {
+        return null;
+      }
+    }
+    if (typeof /** @type {Record<string, unknown>} */ (found['reportPanel'])['scrollIntoView'] !== 'function') {
       return null;
     }
-    for (const name of ['codeSubmit', 'report']) {
+    for (const name of ['codeSubmit', 'report', 'reportMistake']) {
       if (typeof /** @type {Record<string, unknown>} */ (found[name])['disabled'] !== 'boolean') {
         return null;
       }
@@ -292,6 +315,23 @@ function blankNote(page) {
 }
 
 /**
+ * Open or close the panel the report control opens.
+ *
+ * Two writes that have to agree, so they are made in one place: whether the
+ * panel is on screen, and what the control says to a screen reader about it. By
+ * the property, as every other write here is. Where a browser does not reflect the
+ * property, the panel still opens and the control goes on saying it is closed.
+ *
+ * @param {Page} page
+ * @param {boolean} open
+ * @returns {void}
+ */
+function setReportPanel(page, open) {
+  page.reportPanel.hidden = !open;
+  page.report.ariaExpanded = open ? 'true' : 'false';
+}
+
+/**
  * Write the text that never changes.
  *
  * Once, at boot, before any state is shown. The alternative — writing it again
@@ -300,6 +340,10 @@ function blankNote(page) {
  * those means removing and replacing an anchor whose destination is written in
  * the page. The destinations are the one thing no code here touches, so the
  * anchors stay exactly where they were put and only their text is written.
+ *
+ * The one line the report panel's button leaves is written here with the rest,
+ * while it is still hidden. It is a constant, so it cannot depend on what a
+ * request did: nothing that runs after a request has anything to write into it.
  *
  * The line a code that did not match earns is not written here: it is written
  * when it is earned and emptied otherwise, for the reason given at the top of
@@ -324,6 +368,12 @@ export function renderChrome(root) {
   page.translateNote.textContent = COPY.translateNote;
   page.appLink.textContent = COPY.appBanner;
   page.report.textContent = COPY.reportControl;
+  page.reportHelpHeading.textContent = COPY.reportHelpHeading;
+  page.reportHelpBody.textContent = COPY.reportHelpBody;
+  page.reportMistakeHeading.textContent = COPY.reportMistakeHeading;
+  page.reportMistakeBody.textContent = COPY.reportMistakeBody;
+  page.reportMistake.textContent = COPY.reportMistakeButton;
+  page.reportDone.textContent = COPY.reportDone;
 
   page.advisoryLead.textContent = COPY.advisoryLead;
   page.advisoryEmphasis.textContent = COPY.advisoryEmphasis;
@@ -441,7 +491,8 @@ export function renderWrongCode(root) {
  * There is one sanctioned difference, and it is not about the failure. Reporting
  * a link means naming it, and a link whose fragment never parsed has no name to
  * send — so a caller that has no identifier says so and the control is not
- * there. Nothing else varies about what is drawn.
+ * there, and the panel it opens is closed with it, since a panel with no control
+ * could not be closed again. Nothing else varies about what is drawn.
  *
  * The code field is emptied on the way in. Nothing on this surface asks for a
  * code and nothing reachable from it will send one, so a code a recipient typed
@@ -474,6 +525,9 @@ export function renderUnavailable(root, showReport) {
   page.unavailable.hidden = false;
   page.footer.hidden = false;
   page.report.hidden = showReport === false;
+  if (showReport === false) {
+    setReportPanel(page, false);
+  }
 }
 
 /**
@@ -636,8 +690,9 @@ function isRenderable(aad, doc) {
  * Take everything off the page and empty what a note was drawn into.
  *
  * The act the viewer performs when the page is being put away: every surface
- * hidden, the line a code that did not match earned emptied, the code field's
- * value gone, and the note's body emptied and its lines written back to nothing.
+ * hidden, the report panel closed, the line a code that did not match earned
+ * emptied, the code field's value gone, and the note's body emptied and its
+ * lines written back to nothing.
  *
  * That last part is the one with a condition on it, and the condition is not
  * checked here. Emptying the body reports whether the body is empty afterwards,
@@ -666,6 +721,7 @@ export function blankSurface(root) {
   page.note.hidden = true;
   page.unavailable.hidden = true;
   page.footer.hidden = true;
+  setReportPanel(page, false);
   page.codeInput.value = '';
 }
 
@@ -722,10 +778,22 @@ export function setSubmitBusy(root, busy) {
 }
 
 /**
- * Disable the report control, which happens the moment it is used.
+ * Take the explanation and the button out of the report panel and show the one
+ * line that replaces them, which happens the moment the button is pressed.
  *
  * Once and not again: the request is sent without waiting for an answer, so
- * there is no outcome to report back and nothing a second press could add.
+ * there is no outcome to report back and nothing a second press could add. The
+ * button is disabled as well as hidden, and nothing shows it again, so the panel
+ * shows this line however many times it is closed and reopened, and whatever
+ * surface it is reopened on.
+ *
+ * The control that opens the panel is not touched, and goes on opening and
+ * closing it.
+ *
+ * The button that had the focus has gone, so the focus has to go somewhere, and
+ * it goes to the line, so that a screen reader's reading position is on the line
+ * rather than lost with the button. The move is guarded as the one to the code
+ * field is: a line that refuses the focus leaves the same panel drawn.
  *
  * @param {unknown} root
  * @returns {void}
@@ -735,16 +803,39 @@ export function setReportUsed(root) {
   if (page === null) {
     return;
   }
-  page.report.disabled = true;
+  page.reportMistakeBody.hidden = true;
+  page.reportMistake.hidden = true;
+  page.reportMistake.disabled = true;
+  page.reportDone.hidden = false;
+
+  try {
+    page.reportDone.focus();
+  } catch {
+    // Refused, and the line is on the screen either way. There is nowhere to
+    // report it and nothing else to try.
+  }
 }
 
 /**
- * The two controls a recipient can operate, handed to the caller that knows what
- * to do when they are.
+ * The three controls a recipient can operate.
  *
  * Listeners are attached here because attaching one is a write to the page, and
- * every write to the page is in this module. What the listener does is not: the
- * two functions passed in belong to the flow.
+ * every write to the page is in this module. What two of the listeners do is
+ * not: the functions passed in belong to the flow, which knows what to do when
+ * the code control or the report panel's button is pressed.
+ *
+ * The third is the control that opens the report panel, and it stays in this
+ * module. Opening and closing the panel is a change to what is on screen and
+ * nothing else, so that control never reaches the flow, and nothing it does can
+ * send anything.
+ *
+ * Opening it also brings it into view, and closing it moves nothing. The control
+ * is the last thing on the page, so on a surface longer than the window the panel
+ * opens below the window, and a press that shows nothing reads as a press that did
+ * nothing. `nearest` moves the page by the least that will do, and where the panel
+ * is taller than the window it puts the top of the panel at the top of the window.
+ * The move is guarded as the moves of the focus are: a page that refuses it leaves
+ * the same panel open, where it is.
  *
  * @param {unknown} root
  * @param {() => void} onSubmit
@@ -766,6 +857,19 @@ export function wireControls(root, onSubmit, onReport) {
     }
   });
   page.report.addEventListener('click', () => {
+    const opening = page.reportPanel.hidden === true;
+    setReportPanel(page, opening);
+    if (!opening) {
+      return;
+    }
+    try {
+      page.reportPanel.scrollIntoView({ block: 'nearest' });
+    } catch {
+      // Refused, and the panel is open either way. There is nowhere to report it
+      // and nothing else to try.
+    }
+  });
+  page.reportMistake.addEventListener('click', () => {
     onReport();
   });
 }

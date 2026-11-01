@@ -238,6 +238,17 @@ export const REQUIRED_TESTS = Object.freeze({
     'the code field is described by the line that says how long a code is',
     'every drawing on the page is hidden from assistive technology and names nothing',
     'the control that sends a code stays still for anyone who has asked for less motion',
+    'opening and closing the report panel sends nothing, on every surface that has its control',
+    'the button in the report panel sends the identifier and nothing else, and sends it once',
+    'the line the button in the report panel leaves is the same whatever happens to the request',
+    'once the button is pressed the control still works, and the panel shows the line and never the button',
+    'the report panel says the agreed words wherever it is, and is absent where there is no identifier',
+    'a page put away with the report panel open shows nothing of it, and comes back without it or its control',
+    'the report panel can be worked from the keyboard, and each control is named by its own words',
+    'the report panel opens into view, on a note longer than the window and at three times the text size',
+    'a report can outlive the page that sent it',
+    'the report panel is the surface it is pinned to be, open and after its button is pressed',
+    'the report panel reflows at twice and three times the text size on a phone, in whatever face the device has',
   ]),
   // The half of the release check that needs a browser. Neither of these can be
   // reached from a socket: what a browsing context is left holding after a page

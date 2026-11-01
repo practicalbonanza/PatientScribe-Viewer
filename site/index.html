@@ -49,7 +49,15 @@
           <summary class="notice-toggle"><svg class="icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><g fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l7 2.8v5.2c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6.3z" /><path d="M9 12l2.2 2.2L15.5 10" /></g></svg><span id="notice-summary"></span><svg class="chevron" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></summary>
           <p id="notice-body"><span id="notice-lead"></span><a id="policy-link" href="https://patientscribe.com.au/privacy-policy"></a><span id="notice-tail"></span></p>
         </details>
-        <button id="report" type="button"></button>
+        <button id="report" type="button" aria-expanded="false" aria-controls="report-panel"></button>
+        <div id="report-panel" hidden>
+          <h2 id="report-help-heading"></h2>
+          <p id="report-help-body"></p>
+          <h2 id="report-mistake-heading"></h2>
+          <p id="report-mistake-body"></p>
+          <button id="report-mistake" type="button" aria-describedby="report-mistake-body"></button>
+          <p id="report-done" tabindex="-1" hidden></p>
+        </div>
       </footer>
     </main>
   </body>

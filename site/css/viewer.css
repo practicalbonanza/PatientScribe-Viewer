@@ -14,21 +14,22 @@
  * rather than from what is written here. And the page is required to lay out
  * without a horizontal scrollbar at a narrow width and at double the default
  * text size, and the code-entry surface, with and without the line a code that
- * did not match earns, at a phone's width with three times the default text
- * size and at the narrow width with double it, which is why nothing here is
- * given a fixed width, why the control that sends a code may shrink and wrap
- * its words rather than hold them on one line, and why long unbroken text is
- * allowed to break. At those sizes the code field is also required to show the
+ * did not match earns, and the report panel, before and after its button is
+ * pressed, at a phone's width with three times the default text size and at the
+ * narrow width with double it, which is why nothing here is given a fixed width,
+ * why the two controls that send something may shrink and wrap their words
+ * rather than hold them on one line, and why long unbroken text is allowed to
+ * break. At those sizes the code field is also required to show the
  * whole of a typed code, at least as large as the text around it, and the
- * control, the name and the line that opens the surface to break only between
- * words wherever a word fits its line; a word wider than the whole of its line
- * may break, since only smaller text or sideways scrolling would keep it whole.
- * So the space at the sides of the page, the card, the field and the
- * control stops growing once it would take more than a small share of the
- * width, the field's digits, the name and that line come down towards the size
- * of the text around them (never below it) where their larger size would not
- * fit, the spacing between the digits gives way first, and the name moves under
- * its mark rather than break.
+ * control, the name, the line that opens the surface and the words of the panel
+ * to break only between words wherever a word fits its line; a word wider than
+ * the whole of its line may break, since only smaller text or sideways scrolling
+ * would keep it whole. So the space at the sides of the page, the card, the
+ * field, the panel and the controls stops growing once it would take more than
+ * a small share of the width, the field's digits, the name and that line come
+ * down towards the size of the text around them (never below it) where their
+ * larger size would not fit, the spacing between the digits gives way first, and
+ * the name moves under its mark rather than break.
  *
  * `color-scheme` is declared so that a device in a dark theme is handed a page
  * that is deliberately light rather than one the browser has inverted on its
@@ -440,7 +441,7 @@ svg {
   font-size: 0.9375rem;
 }
 
-/* The footer: the notice, and the report control where there is one. */
+/* The footer: the notice, and the report control and its panel where there is one. */
 #footer {
   margin-top: 1.75rem;
   color: #575b5e;
@@ -505,8 +506,56 @@ svg {
   cursor: pointer;
 }
 
-#report:disabled {
-  color: #575b5e;
-  text-decoration: none;
-  cursor: default;
+/*
+ * The panel the report control opens: help first, then the one button on the
+ * page that sends a report, with a line between the two. The button is outlined
+ * and not filled, so it never reads as the page's main action, which is the
+ * control that sends a code.
+ */
+#report-panel {
+  margin-top: 0.75rem;
+  padding: 1rem min(1rem, 5vw) 0.25rem;
+  border: 1px solid #ebe3d3;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #26292b;
+}
+
+#report-help-heading,
+#report-mistake-heading {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+#report-mistake-heading {
+  padding-top: 0.875rem;
+  border-top: 1px solid #ebe3d3;
+}
+
+#report-mistake {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 2.75rem;
+  white-space: normal;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem min(1rem, 5vw);
+  border: 2px solid #0f6b5c;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #0f6b5c;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+/* The one line the button leaves, the same whatever happened to the request. */
+#report-done {
+  margin: 0 0 0.75rem;
+  padding: 0.75rem min(0.875rem, 4.375vw);
+  border-radius: 12px;
+  background: #f4f0e8;
 }

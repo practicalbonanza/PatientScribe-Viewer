@@ -523,7 +523,13 @@ async function openShare(root, params, body, started) {
  * Sent and not waited on. There is no answer worth showing — a report that
  * arrived and a report that did not would draw the same thing, because the
  * alternative is a page that tells a recipient which of the two happened — so
- * the control disables itself the moment it is used and nothing else changes.
+ * the one fixed line replaces the explanation and the panel's button the moment
+ * the button is pressed, ahead of anything being sent, and nothing else changes.
+ * That button is the only way here: the control that opens the panel sends nothing.
+ *
+ * `keepalive`, because that line tells a recipient they can close this page, and
+ * at that moment nothing has left it. The request has to be able to outlive the
+ * page, or a recipient who did what the line said has turned nothing off.
  *
  * @param {unknown} root
  * @returns {void}
@@ -549,6 +555,7 @@ function report(root) {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: reportRequestBody(id),
+      keepalive: true,
     });
     void sent.then(
       () => {},

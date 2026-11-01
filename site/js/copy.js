@@ -107,8 +107,26 @@ export const COPY = Object.freeze({
   advisoryEmphasis: `Open in Safari`,
   advisoryTail: ` (or Chrome).`,
 
-  /** The control that reports a link, which exists only where there is an identifier to report. */
+  /** The control that opens the report panel, which exists only where there is an identifier to report. */
   reportControl: `Report a problem with this link`,
+
+  /** The panel's first part, read first: help for someone who can't open the note. It sends nothing. */
+  reportHelpHeading: `Can't open the note?`,
+  reportHelpBody: `The person who shared it can tell you the code again, or send you a new link.`,
+
+  /**
+   * The panel's second part: the one control on this page that sends a report.
+   * What it does is said before it is pressed, because it cannot be taken back.
+   */
+  reportMistakeHeading: `Sent to you by mistake?`,
+  reportMistakeBody: `You can turn this link off. It will stop working for everyone, including you. This can't be undone.`,
+  reportMistakeButton: `Turn this link off`,
+
+  /**
+   * The one line after that control is pressed, the same whatever happened to
+   * the request. It says nothing about whether a report arrived or what it did.
+   */
+  reportDone: `Thank you. You can close this page.`,
 
   /**
    * The collection notice: its heading, which is also what the closed notice
